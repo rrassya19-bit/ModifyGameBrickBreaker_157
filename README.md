@@ -11,19 +11,27 @@ Block Breaker adalah game arkade berbasis Pygame. Pemain menggerakkan papan untu
 
 ## Demo
 
-> Belum tersedia. Folder `assets/` belum berisi `demo.gif`.
+![Demo gameplay Block Breaker](assets/demo.gif)
 
 ## Sebelum vs Sesudah
 
 | Sebelum | Sesudah |
 |---|---|
-| Gambar `assets/before.png` belum tersedia di repository. | Gambar `assets/after_game.png` belum tersedia di repository. |
+| ![Gameplay versi awal sebelum modifikasi](assets/before.png) | ![Gameplay versi terbaru setelah modifikasi](assets/after_game.png) |
 
-Galeri tambahan belum dapat ditampilkan karena file gambarnya belum ada:
+### Galeri Tambahan
 
-- **Layar awal:** `assets/after_start.png` belum tersedia.
-- **Power-up:** `assets/after_powerup.png` belum tersedia.
-- **Game over:** `assets/after_gameover.png` belum tersedia.
+**Layar awal — judul, balok dekoratif, dan bola demo.**
+
+![Layar awal Block Breaker setelah animasi judul](assets/after_start.png)
+
+**Power-up — kapsul nyawa jatuh dengan efek visual saat balok pecah.**
+
+![Power-up jatuh dengan partikel dan shockwave](assets/after_powerup.png)
+
+**Game Over — skor akhir dan high score pada panel overlay.**
+
+![Layar Game Over dengan skor akhir](assets/after_gameover.png)
 
 ## Ringkasan Fitur Utama
 
@@ -169,9 +177,27 @@ ModifyGameBrickBreaker_157/
 ├── .gitignore
 ├── README.md
 ├── app.py
-├── assets/             # Saat ini kosong; belum ada gambar demo/screenshot
+├── assets/
+│   ├── after_game.png
+│   ├── after_gameover.png
+│   ├── after_powerup.png
+│   ├── after_start.png
+│   ├── before.png
+│   └── demo.gif
+├── tools/
+│   └── capture_screenshots.py
 └── highscore.txt       # Dibuat atau diperbarui saat game menyimpan skor
 ```
+
+## Membuat Ulang Screenshot
+
+```bash
+python tools/capture_screenshots.py
+```
+
+Skrip menjalankan game secara headless melalui SDL dummy dan menyimpan frame dari display game. High score dinonaktifkan selama capture agar `highscore.txt` tidak berubah.
+
+Pillow bersifat opsional dan hanya dibutuhkan untuk merangkai frame gameplay menjadi `demo.gif`.
 
 ## Riwayat Commit
 
@@ -195,6 +221,8 @@ ModifyGameBrickBreaker_157/
 | `6d3f788` | `feat: add eased animations (level intro wave, hit flash, shockwave, paddle squash, score count-up)` | Menambahkan animasi easing untuk intro, tabrakan, papan, dan skor. |
 | `a0657fa` | `style: polished menu, fade transitions, and glass overlay panels` | Memoles menu, transisi, dan panel overlay. |
 | `86540de` | `perf: add bloom effect, quality toggle, and cache audit` | Menambahkan bloom, pilihan kualitas, dan optimasi cache visual. |
+| `cbc2a16` | `docs: add README with before/after screenshots and full changelog` | Menambahkan identitas proyek, panduan, changelog, dan riwayat pengembangan. |
+| `3d4323b` | `docs: add before/after screenshots and capture script` | Menambahkan screenshot hasil game dan skrip capture headless yang dapat dijalankan ulang. |
 
 ## Pemanfaatan AI
 
@@ -202,7 +230,6 @@ opencode dan Codex digunakan sebagai alat bantu coding secara bertahap. Perubaha
 
 ## Catatan Pengembangan Lanjutan
 
-- Tambahkan screenshot dan GIF gameplay ke `assets/` agar dokumentasi menampilkan hasil visual secara langsung.
 - Tambahkan pilihan tingkat kesulitan dengan parameter kecepatan dan ketahanan balok.
 - Tambahkan layar pengaturan untuk mengubah volume dan kualitas efek.
 
