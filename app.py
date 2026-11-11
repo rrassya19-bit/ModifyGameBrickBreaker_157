@@ -155,6 +155,27 @@ SHAKE_STRENGTH = 4
 STRIKER_FLASH_TIME = 6
 FLOATING_TEXT_LIFE = 30
 
+# Animasi gameplay
+BLOCK_INTRO_DURATION = 22
+BLOCK_INTRO_STAGGER = 3
+BLOCK_INTRO_RISE = 16
+BLOCK_SCALE_MIN = 0.60
+BLOCK_SCALE_MAX = 1.10
+BLOCK_SCALE_STEPS = 10
+HIT_FLASH_TIME = 5
+HIT_WOBBLE_TIME = 9
+SQUASH_TIME = 12
+SQUASH_STEPS = 4
+SHOCKWAVE_LIFE = 18
+SHOCKWAVE_RADIUS = 36
+COMBO_WINDOW = 45
+COMBO_TEXT_LIFE = 40
+FLOAT_RISE = 26
+
+# Total frame animasi intro; bola menunggu sampai selesai
+INTRO_TOTAL_FRAMES = ((GRID_ROWS - 1) * BLOCK_INTRO_STAGGER +
+                      BLOCK_INTRO_DURATION)
+
 # Background dinamis: aksen berganti tiap level, lalu berulang
 LEVEL_ACCENTS = ((52, 96, 140), VIOLET, TEAL, ROSE_GOLD)
 BG_FADE_FRAMES = 48
@@ -185,6 +206,8 @@ powerUpSurfaceCache = {}
 powerUpGlowCache = {}
 ballSurfaceCache = {}
 trailCircleCache = {}
+flashSurfaceCache = {}
+shockwaveCache = {}
 
 
 # Mencampur dua warna (t = 0..1)
@@ -192,6 +215,36 @@ def blendColor(colorA, colorB, t):
     return (int(colorA[0] + (colorB[0] - colorA[0]) * t),
             int(colorA[1] + (colorB[1] - colorA[1]) * t),
             int(colorA[2] + (colorB[2] - colorA[2]) * t))
+
+
+# Membatasi nilai ke rentang 0..1
+def clamp01(value):
+    return max(0.0, min(1.0, value))
+
+
+# Easing standar untuk semua animasi
+def easeOutCubic(t):
+    t = clamp01(t)
+    return 1 - (1 - t) ** 3
+
+
+def easeOutBack(t):
+    t = clamp01(t)
+    c1 = 1.70158
+    c3 = c1 + 1
+    return 1 + c3 * (t - 1) ** 3 + c1 * (t - 1) ** 2
+
+
+# Ukuran balok pada animasi intro diambil dari langkah tetap agar
+# permukaannya selalu tersedia di cache
+def blockScaleForStep(step):
+    ratio = step / BLOCK_SCALE_STEPS
+    return BLOCK_SCALE_MIN + ratio * (BLOCK_SCALE_MAX - BLOCK_SCALE_MIN)
+
+
+def blockScaleToStep(scale):
+    ratio = (scale - BLOCK_SCALE_MIN) / (BLOCK_SCALE_MAX - BLOCK_SCALE_MIN)
+    return max(0, min(BLOCK_SCALE_STEPS, int(round(ratio * BLOCK_SCALE_STEPS))))
 
 
 # Membuat permukaan gradasi vertikal untuk background
@@ -293,6 +346,9 @@ def createVignetteSurface():
 
 
 vignetteSurface = createVignetteSurface()
+
+# Buffer tetap untuk screen shake (tidak membuat Surface baru tiap frame)
+shakeBuffer = pygame.Surface((WIDTH, HEIGHT))
 
 
 # Latar lengkap: gradasi level (dengan crossfade), bintang, lalu vignette
@@ -398,6 +454,33 @@ def getCrackSurface(width, height):
         crackSurfaceCache[key] = pygame.transform.smoothscale(
             surface, (width, height)).convert_alpha()
     return crackSurfaceCache[key]
+
+
+# Kilatan putih singkat saat balok terkena pukulan (di-cache per ukuran)
+def getFlashSurface(width, height):
+    key = (width, height)
+    if key not in flashSurfaceCache:
+        surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        pygame.draw.rect(surface, (255, 255, 255, 185),
+                         surface.get_rect(), border_radius=BLOCK_RADIUS)
+        flashSurfaceCache[key] = surface.convert_alpha()
+    return flashSurfaceCache[key]
+
+
+# Cincin shockwave tipis untuk tiap langkah animasi (dibuat sekali)
+def precomputeShockwaves():
+    scale = 3
+    for step in range(SHOCKWAVE_LIFE + 1):
+        progress = step / SHOCKWAVE_LIFE
+        radius = max(2, int(SHOCKWAVE_RADIUS * easeOutCubic(progress)))
+        alpha = int(190 * (1 - progress))
+        size = radius * 2 * scale
+        big = pygame.Surface((size, size), pygame.SRCALPHA)
+        pygame.draw.circle(big, (GOLD[0], GOLD[1], GOLD[2], alpha),
+                           (size // 2, size // 2),
+                           max(1, size // 2 - scale), max(1, scale))
+        shockwaveCache[step] = pygame.transform.smoothscale(
+            big, (radius * 2, radius * 2)).convert_alpha()
 
 
 # Papan bergaya kaca dengan border tipis dan sorotan atas
@@ -563,6 +646,30 @@ def createGlowSurface(radius, boost=1.0):
     return glow.convert_alpha()
 
 
+# Menyiapkan semua variasi surface animasi di awal (tidak di loop game)
+def prewarmAnimationCaches():
+    for color in (GREEN, WHITE, RED):
+        for healthRatio in (1.0, 2 / 3, 0.5, 1 / 3):
+            for step in range(BLOCK_SCALE_STEPS + 1):
+                scale = blockScaleForStep(step)
+                width = max(4, int(BLOCK_W * scale))
+                height = max(3, int(BLOCK_H * scale))
+                getBlockSurface(color, healthRatio, width, height)
+                getFlashSurface(width, height)
+
+    # Variasi squash papan untuk lebar normal dan lebar power-up
+    for baseWidth in (PADDLE_WIDTH, WIDE_PADDLE_WIDTH):
+        for step in range(SQUASH_STEPS + 1):
+            squash = step / SQUASH_STEPS
+            width = int(baseWidth * (1 + 0.10 * squash))
+            height = max(8, int(20 * (1 - 0.16 * squash)))
+            getPaddleSurface(width, height)
+            getPaddleGlow(width, height)
+
+
+precomputeShockwaves()
+prewarmAnimationCaches()
+
 # Background gradasi dibuat sekali, lalu di-blit tiap frame
 backgroundSurface = createGradientSurface(DARK_BLUE, DARK_PURPLE, HEIGHT)
 
@@ -656,23 +763,38 @@ class Striker:
         self.striker = pygame.draw.rect(screen, 
                                self.color, self.strikerRect)
 
+        # Timer squash & stretch saat bola memantul
+        self.squashTimer = 0
+
     # Used to render the object on the screen
     def display(self, flash=False):
-        width = self.strikerRect.width
-        height = self.strikerRect.height
+        # Skala squash and stretch singkat setelah bola memantul
+        squash = 0.0
+        if self.squashTimer > 0:
+            progress = 1 - self.squashTimer / SQUASH_TIME
+            squash = math.sin(progress * math.pi)
+
+        step = max(0, min(SQUASH_STEPS, int(round(squash * SQUASH_STEPS))))
+        squash = step / SQUASH_STEPS
+
+        width = int(self.width * (1 + 0.10 * squash))
+        height = max(8, int(self.height * (1 - 0.16 * squash)))
+        drawRect = pygame.Rect(0, 0, width, height)
+        drawRect.centerx = self.strikerRect.centerx
+        drawRect.bottom = self.strikerRect.bottom
 
         # Glow lembut di belakang papan kaca
         glow = getPaddleGlow(width, height)
-        screen.blit(glow, glow.get_rect(center=self.strikerRect.center))
+        screen.blit(glow, glow.get_rect(center=drawRect.center))
 
         # Papan semi-transparan dengan border tipis terang
         surface = getPaddleSurface(width, height)
-        screen.blit(surface, self.strikerRect.topleft)
+        screen.blit(surface, drawRect.topleft)
 
         # Kilau tambahan singkat saat bola memantul
         if flash:
             pygame.draw.rect(screen, (235, 250, 252),
-                             self.strikerRect, 1, border_radius=height // 2)
+                             drawRect, 1, border_radius=height // 2)
 
     # Used to update the state of the object
     def update(self, xFac):
@@ -687,6 +809,9 @@ class Striker:
 
         self.strikerRect = pygame.Rect(
             self.posx, self.posy, self.width, self.height)
+
+        if self.squashTimer > 0:
+            self.squashTimer -= 1
 
     # Mengubah lebar striker (dipakai efek power-up Paddle Besar)
     def setWidth(self, width):
@@ -723,6 +848,12 @@ class Block:
         # Health maksimal dipakai untuk menentukan warna balok
         self.maxHealth = self.health
 
+        # Status animasi: intro bergelombang, kilatan, dan goyangan
+        self.introDelay = 0
+        self.introTimer = 0
+        self.hitFlashTimer = 0
+        self.wobbleTimer = 0
+
         # The rect variable is used to handle the placement 
         # and the collisions of the object
         self.blockRect = pygame.Rect(
@@ -730,24 +861,64 @@ class Block:
         self.block = pygame.draw.rect(screen, self.color, 
                                       self.blockRect)
 
+    # Memajukan timer animasi balok (dipanggil saat game tidak dijeda)
+    def updateAnimation(self):
+        if self.introTimer < self.introDelay + BLOCK_INTRO_DURATION:
+            self.introTimer += 1
+        if self.hitFlashTimer > 0:
+            self.hitFlashTimer -= 1
+        if self.wobbleTimer > 0:
+            self.wobbleTimer -= 1
+
     # Used to render the object on the screen if and only 
     # if its health is greater than 0
     def display(self):
-        if self.health > 0:
-            # Warna berubah sesuai sisa health
-            healthRatio = self.health / self.maxHealth
-            surface = getBlockSurface(self.color, healthRatio,
-                                      self.width, self.height)
-            screen.blit(surface, self.blockRect.topleft)
+        if self.health <= 0:
+            return
 
-            # Retakan tipis saat balok sudah terkena pukulan
-            if healthRatio < 1:
-                screen.blit(getCrackSurface(self.width, self.height),
-                            self.blockRect.topleft)
+        # Balok muncul baris demi baris dengan easing (slide + membesar)
+        progress = clamp01(
+            (self.introTimer - self.introDelay) / BLOCK_INTRO_DURATION)
+        if progress <= 0:
+            return
+
+        eased = easeOutCubic(progress)
+        slide = int((1 - eased) * -BLOCK_INTRO_RISE)
+        scale = BLOCK_SCALE_MIN + (1 - BLOCK_SCALE_MIN) * eased
+
+        # Goyangan kecil setelah terkena pukulan
+        if self.wobbleTimer > 0:
+            wobble = self.wobbleTimer / HIT_WOBBLE_TIME
+            scale += 0.06 * math.sin(wobble * math.pi * 3)
+
+        step = blockScaleToStep(scale)
+        drawWidth = max(4, int(self.width * blockScaleForStep(step)))
+        drawHeight = max(3, int(self.height * blockScaleForStep(step)))
+
+        # Warna berubah sesuai sisa health
+        healthRatio = self.health / self.maxHealth
+        surface = getBlockSurface(self.color, healthRatio,
+                                  drawWidth, drawHeight)
+        drawRect = surface.get_rect(center=self.blockRect.center)
+        drawRect.y += slide
+        screen.blit(surface, drawRect.topleft)
+
+        # Retakan tipis saat balok sudah terkena pukulan
+        if healthRatio < 1:
+            crack = getCrackSurface(self.width, self.height)
+            screen.blit(crack, self.blockRect.topleft)
+
+        # Kilatan putih singkat saat baru dipukul
+        if self.hitFlashTimer > 0:
+            flash = getFlashSurface(drawWidth, drawHeight)
+            screen.blit(flash, drawRect.topleft)
 
     # Used to decrease the health of the block
     def hit(self):
         self.health -= self.damage
+        # Picu kilatan dan goyangan tiap kali terkena pukulan
+        self.hitFlashTimer = HIT_FLASH_TIME
+        self.wobbleTimer = HIT_WOBBLE_TIME
 
     # Used to get the rect of the object
     def getRect(self):
@@ -957,21 +1128,74 @@ class Particle:
 class FloatingText:
     def __init__(self, posx, posy, text):
         self.posx, self.posy = posx, posy
+        self.startY = posy
         self.text = text
         self.life = FLOATING_TEXT_LIFE
         self.maxLife = FLOATING_TEXT_LIFE
 
-    # Teks naik sedikit lalu memudar
+    # Teks naik dengan easing lalu memudar
     def update(self):
-        self.posy -= 1
         self.life -= 1
+        progress = 1 - self.life / self.maxLife
+        self.posy = self.startY - FLOAT_RISE * easeOutCubic(progress)
 
         return self.life <= 0
 
     def display(self):
-        alpha = int(255 * self.life / self.maxLife)
+        rawAlpha = 255 * self.life / self.maxLife
+        # Alpha dibulatkan agar cache teks tidak terus bertambah
+        alpha = int(rawAlpha)
+        alpha -= alpha % 16
         surface = renderTextAlphaCached(
             self.text, 15, GOLD, alpha, True)
+        screen.blit(surface, surface.get_rect(
+            center=(int(self.posx), int(self.posy))))
+
+
+# Shockwave Class: cincin tipis yang membesar saat balok hancur
+class Shockwave:
+    def __init__(self, posx, posy):
+        self.posx, self.posy = posx, posy
+        self.life = SHOCKWAVE_LIFE
+        self.maxLife = SHOCKWAVE_LIFE
+
+    def update(self):
+        self.life -= 1
+        return self.life <= 0
+
+    def display(self):
+        progress = 1 - self.life / self.maxLife
+        step = max(0, min(SHOCKWAVE_LIFE,
+                          int(progress * SHOCKWAVE_LIFE)))
+        ring = shockwaveCache[step]
+        screen.blit(ring, ring.get_rect(
+            center=(int(self.posx), int(self.posy))))
+
+
+# ComboText Class: teks "COMBO xN" dengan efek pop emas
+class ComboText:
+    def __init__(self, posx, posy, count):
+        self.posx, self.posy = posx, posy
+        self.startY = posy
+        self.count = count
+        self.life = COMBO_TEXT_LIFE
+        self.maxLife = COMBO_TEXT_LIFE
+
+    def update(self):
+        self.life -= 1
+        progress = 1 - self.life / self.maxLife
+        self.posy = self.startY - FLOAT_RISE * 0.8 * easeOutCubic(progress)
+        return self.life <= 0
+
+    def display(self):
+        progress = 1 - self.life / self.maxLife
+        pop = easeOutBack(min(1.0, progress * 2.2))
+        size = 18 + int(pop * 8)
+        alpha = 255 if progress < 0.6 else 255 * (1 - progress) / 0.4
+        alpha = int(alpha)
+        alpha -= alpha % 16
+        surface = renderTextAlphaCached(
+            "COMBO x" + str(self.count), size, GOLD, alpha, True)
         screen.blit(surface, surface.get_rect(
             center=(int(self.posx), int(self.posy))))
 
@@ -1072,9 +1296,11 @@ def populateBlocks(blockWidth, blockHeight,
             posy = GRID_TOP + row * (blockHeight+verticalGap)
 
             # Jenis balok acak: teal (1x), violet (2x), rose (3x)
-            listOfBlocks.append(
-                Block(posx, posy, blockWidth, blockHeight, 
-                      random.choice([WHITE, GREEN, RED])))
+            newBlock = Block(posx, posy, blockWidth, blockHeight,
+                             random.choice([WHITE, GREEN, RED]))
+            # Jeda intro bertambah tiap baris agar muncul bergelombang
+            newBlock.introDelay = row * BLOCK_INTRO_STAGGER
+            listOfBlocks.append(newBlock)
 
     return listOfBlocks
 
@@ -1275,8 +1501,16 @@ def main():
     # Efek visual dinamis
     particles = []
     floatingTexts = []
+    shockwaves = []
+    comboTexts = []
     strikerFlashTimer = 0
     shakeTimer = 0
+
+    # Animasi skor dan combo
+    displayScore = 0
+    levelIntroTimer = 0
+    comboCount = 0
+    comboTimer = 0
 
     # Tampilkan layar awal sebelum permainan dimulai
     if not startScreen(highScore):
@@ -1312,6 +1546,12 @@ def main():
                 powerUps = []
                 particles = []
                 floatingTexts = []
+                shockwaves = []
+                comboTexts = []
+                comboCount = 0
+                comboTimer = 0
+                # Mulai lagi animasi intro agar balok muncul bergelombang
+                levelIntroTimer = 0
                 ball.reset(striker)
             else:
                 running = False
@@ -1345,6 +1585,12 @@ def main():
             powerUps = []
             particles = []
             floatingTexts = []
+            shockwaves = []
+            comboTexts = []
+            displayScore = 0
+            levelIntroTimer = 0
+            comboCount = 0
+            comboTimer = 0
             paddleTimer = 0
             slowTimer = 0
             strikerFlashTimer = 0
@@ -1380,6 +1626,12 @@ def main():
             # Update striker lebih dulu supaya posisinya terbaru saat tabrakan dicek
             striker.update(strikerXFac)
 
+            # Majukan animasi balok (intro, kilatan, goyangan)
+            for block in listOfBlocks:
+                block.updateAnimation()
+            if levelIntroTimer < INTRO_TOTAL_FRAMES:
+                levelIntroTimer += 1
+
             # Collision check
             # Bola memantul dari striker sesuai titik pukul
             if(collisionChecker(striker.getRect(),
@@ -1387,6 +1639,7 @@ def main():
                 strikerBounce(ball, striker.getRect())
                 # Kilau singkat pada striker saat bola memantul
                 strikerFlashTimer = STRIKER_FLASH_TIME
+                striker.squashTimer = SQUASH_TIME
                 playSound("bounce")
 
             # Iterasi salinan list agar aman saat balok dihapus,
@@ -1423,6 +1676,23 @@ def main():
                             block.getRect().centery,
                             "+" + str(points)))
 
+                        # Cincin shockwave tipis di posisi balok hancur
+                        shockwaves.append(Shockwave(
+                            block.getRect().centerx,
+                            block.getRect().centery))
+
+                        # Hitung combo jika balok hancur beruntun
+                        if comboTimer > 0:
+                            comboCount += 1
+                        else:
+                            comboCount = 1
+                        comboTimer = COMBO_WINDOW
+                        if comboCount >= 2:
+                            comboTexts.append(ComboText(
+                                block.getRect().centerx,
+                                block.getRect().centery - 16,
+                                comboCount))
+
                         # Peluang sekitar 20% menjatuhkan power-up
                         if random.random() < POWERUP_CHANCE:
                             powerUps.append(PowerUp(
@@ -1434,7 +1704,11 @@ def main():
                     break
 
             # Update
-            lifeLost = ball.update()
+            # Bola baru bergerak setelah animasi intro level selesai
+            if levelIntroTimer >= INTRO_TOTAL_FRAMES:
+                lifeLost = ball.update()
+            else:
+                lifeLost = False
 
             if lifeLost:
                 lives -= 1
@@ -1475,6 +1749,18 @@ def main():
                 if slowTimer == 0:
                     ball.removeSlow()
 
+            # Skor tampil dengan count-up halus menuju skor asli
+            if displayScore < score:
+                displayScore += max(1.0, (score - displayScore) * 0.2)
+                if displayScore > score:
+                    displayScore = score
+
+            # Jendela combo mengecil tiap frame
+            if comboTimer > 0:
+                comboTimer -= 1
+                if comboTimer == 0:
+                    comboCount = 0
+
             # Timer efek visual
             if strikerFlashTimer > 0:
                 strikerFlashTimer -= 1
@@ -1491,6 +1777,14 @@ def main():
                 if floatingText.update():
                     floatingTexts.remove(floatingText)
 
+            for shockwave in shockwaves[:]:
+                if shockwave.update():
+                    shockwaves.remove(shockwave)
+
+            for comboText in comboTexts[:]:
+                if comboText.update():
+                    comboTexts.remove(comboText)
+
         # Display
         striker.display(strikerFlashTimer > 0)
         ball.display()
@@ -1502,12 +1796,18 @@ def main():
         for powerUp in powerUps:
             powerUp.display()
 
-        # Partikel dan teks skor melayang di atas balok
+        # Shockwave, partikel, dan teks skor melayang di atas balok
+        for shockwave in shockwaves:
+            shockwave.display()
+
         for particle in particles:
             particle.display()
 
         for floatingText in floatingTexts:
             floatingText.display()
+
+        for comboText in comboTexts:
+            comboText.display()
 
         # Top bar tipis: Score (kiri), Level (tengah), High Score (kanan)
         pygame.draw.line(screen, (58, 64, 94),
@@ -1515,7 +1815,8 @@ def main():
                          (WIDTH - HUD_MARGIN, HUD_TOP_H), 1)
 
         scoreLabel = renderTextCached("SCORE", 11, TEXT_DIM, True)
-        scoreValue = renderTextCached(str(score), 19, TEXT_SOFT, True)
+        scoreValue = renderTextCached(str(int(round(displayScore))),
+                                      19, TEXT_SOFT, True)
         screen.blit(scoreLabel, (HUD_MARGIN, 11))
         screen.blit(scoreValue, (HUD_MARGIN - 1, 26))
 
@@ -1572,13 +1873,15 @@ def main():
                 center=(WIDTH // 2, HEIGHT // 2 + 40))
             screen.blit(pauseHint, pauseHintRect)
 
-        # Efek screen shake ringan: geser seluruh frame sesaat
+        # Efek screen shake dengan amplitudo yang meluruh halus
         if shakeTimer > 0:
-            shakeX = random.randint(-SHAKE_STRENGTH, SHAKE_STRENGTH)
-            shakeY = random.randint(-SHAKE_STRENGTH, SHAKE_STRENGTH)
-            frame = screen.copy()
+            decay = (shakeTimer / SHAKE_TIME) ** 2
+            strength = SHAKE_STRENGTH * decay
+            shakeX = int(random.uniform(-strength, strength))
+            shakeY = int(random.uniform(-strength, strength))
+            shakeBuffer.blit(screen, (0, 0))
             drawBackground(bgAccent, bgPrevAccent, bgFade)
-            screen.blit(frame, (shakeX, shakeY))
+            screen.blit(shakeBuffer, (shakeX, shakeY))
 
         pygame.display.update()
         clock.tick(FPS)
