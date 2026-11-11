@@ -132,6 +132,8 @@ WIDE_PADDLE_WIDTH = 160
 SLOW_FACTOR = 0.6
 MAX_LIVES = 5
 POWERUP_SPEED = 1.5
+POWERUP_W, POWERUP_H = 34, 18
+BALL_GLOW_FRAMES = 12
 
 # Jenis power-up dan warnanya
 POWERUP_PADDLE = "paddle"
@@ -163,6 +165,16 @@ blockSurfaceCache = {}
 # Cache ikon hati anti-aliased
 heartCache = {}
 
+# Cache surface bergaya (dibuat sekali, dipakai berulang)
+roundedSurfaceCache = {}
+crackSurfaceCache = {}
+paddleSurfaceCache = {}
+paddleGlowCache = {}
+powerUpSurfaceCache = {}
+powerUpGlowCache = {}
+ballSurfaceCache = {}
+trailCircleCache = {}
+
 
 # Mencampur dua warna (t = 0..1)
 def blendColor(colorA, colorB, t):
@@ -181,64 +193,262 @@ def createGradientSurface(topColor, bottomColor, height):
     return surface
 
 
-# Membuat permukaan gradasi vertikal dengan sudut membulat
-def createRoundedGradientSurface(width, height,
-                                 topColor, bottomColor, radius):
-    gradient = pygame.Surface((width, height), pygame.SRCALPHA)
-    for y in range(height):
-        factor = y / max(1, height - 1)
-        pygame.draw.line(gradient, blendColor(topColor, bottomColor, factor),
-                         (0, y), (width, y))
+# Membuat permukaan gradasi vertikal dengan sudut membulat (supersampling 3x)
+def makeRoundedSurface(width, height, radius, colorTop, colorBottom):
+    key = (width, height, radius, colorTop, colorBottom)
+    if key in roundedSurfaceCache:
+        return roundedSurfaceCache[key]
 
-    # Masking sudut membulat
-    mask = pygame.Surface((width, height), pygame.SRCALPHA)
+    scale = 3
+    bigW, bigH = width * scale, height * scale
+
+    gradient = pygame.Surface((bigW, bigH), pygame.SRCALPHA)
+    for y in range(bigH):
+        factor = y / max(1, bigH - 1)
+        pygame.draw.line(gradient,
+                         blendColor(colorTop, colorBottom, factor),
+                         (0, y), (bigW, y))
+
+    # Masking sudut membulat pada resolusi tinggi
+    mask = pygame.Surface((bigW, bigH), pygame.SRCALPHA)
     pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(),
-                     border_radius=radius)
+                     border_radius=radius * scale)
     gradient.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
-    return gradient
+
+    surface = pygame.transform.smoothscale(
+        gradient, (width, height)).convert_alpha()
+    roundedSurfaceCache[key] = surface
+    return surface
 
 
 # Warna balok sesuai jenis dan sisa health
 def blockColors(color, healthRatio):
     if color == RED:
-        topColor, bottomColor = BLOCK_RED_TOP, BLOCK_RED_BOTTOM
+        topColor, bottomColor = BLOCK_ROSE_TOP, BLOCK_ROSE_BOTTOM
     elif color == WHITE:
-        topColor, bottomColor = BLOCK_WHITE_TOP, BLOCK_WHITE_BOTTOM
+        topColor, bottomColor = BLOCK_VIOLET_TOP, BLOCK_VIOLET_BOTTOM
     else:
-        topColor, bottomColor = BLOCK_GREEN_TOP, BLOCK_GREEN_BOTTOM
+        topColor, bottomColor = BLOCK_TEAL_TOP, BLOCK_TEAL_BOTTOM
 
-    # Semakin kecil health, warna makin gelap
-    darken = 0.45 + 0.55 * healthRatio
+    # Semakin kecil health, warna makin redup
+    darken = 0.55 + 0.45 * healthRatio
     return (blendColor(topColor, BLOCK_DARK, 1 - darken),
             blendColor(bottomColor, BLOCK_DARK, 1 - darken))
 
 
-# Mengambil permukaan balok dari cache (dibuat sekali per warna/health)
+# Permukaan balok: gradasi halus, sorotan atas, dan bayangan bawah
 def getBlockSurface(color, healthRatio, width, height):
     key = (color, round(healthRatio, 2), width, height)
     if key not in blockSurfaceCache:
         topColor, bottomColor = blockColors(color, healthRatio)
-        blockSurfaceCache[key] = createRoundedGradientSurface(
-            width, height, topColor, bottomColor, BLOCK_RADIUS)
+        surface = makeRoundedSurface(
+            width, height, BLOCK_RADIUS, topColor, bottomColor).copy()
+
+        # Sorotan tipis di atas
+        pygame.draw.line(surface, blendColor(topColor, (255, 255, 255), 0.4),
+                         (BLOCK_RADIUS + 1, 2), (width - BLOCK_RADIUS - 2, 2))
+        # Bayangan lembut di bawah
+        pygame.draw.line(surface, blendColor(bottomColor, (0, 0, 0), 0.5),
+                         (BLOCK_RADIUS + 1, height - 2),
+                         (width - BLOCK_RADIUS - 2, height - 2))
+        # Border tipis ikut di-cache
+        pygame.draw.rect(surface, BLOCK_BORDER, surface.get_rect(),
+                         1, border_radius=BLOCK_RADIUS)
+
+        blockSurfaceCache[key] = surface
     return blockSurfaceCache[key]
 
 
-# Membuat efek glow bola sekali saja
-def createGlowSurface(radius):
-    size = radius * 6
+# Retakan tipis untuk balok yang sudah terkena pukulan
+def getCrackSurface(width, height):
+    key = (width, height)
+    if key not in crackSurfaceCache:
+        scale = 3
+        bigW, bigH = width * scale, height * scale
+        surface = pygame.Surface((bigW, bigH), pygame.SRCALPHA)
+
+        crackColor = (240, 244, 252, 130)
+        lines = [
+            [(0.18, 0.25), (0.42, 0.58), (0.30, 0.85)],
+            [(0.58, 0.18), (0.52, 0.48), (0.78, 0.70)]]
+        for points in lines:
+            pygame.draw.lines(surface, crackColor, False,
+                              [(int(x * bigW), int(y * bigH))
+                               for x, y in points], 2)
+
+        crackSurfaceCache[key] = pygame.transform.smoothscale(
+            surface, (width, height)).convert_alpha()
+    return crackSurfaceCache[key]
+
+
+# Papan bergaya kaca dengan border tipis dan sorotan atas
+def getPaddleSurface(width, height):
+    key = (width, height)
+    if key not in paddleSurfaceCache:
+        surface = makeRoundedSurface(
+            width, height, height // 2,
+            (92, 158, 188), (42, 82, 116)).copy()
+        surface.set_alpha(222)
+
+        pygame.draw.rect(surface, STRIKER_BORDER, surface.get_rect(),
+                         1, border_radius=height // 2)
+        pygame.draw.line(surface, (226, 246, 250),
+                         (12, 3), (width - 13, 3))
+        paddleSurfaceCache[key] = surface
+    return paddleSurfaceCache[key]
+
+
+# Glow lembut di sekitar papan
+def getPaddleGlow(width, height):
+    key = (width, height)
+    if key not in paddleGlowCache:
+        glowW, glowH = width + 30, height + 30
+        surface = pygame.Surface((glowW, glowH), pygame.SRCALPHA)
+        for shrink, alpha in ((0, 22), (5, 30), (10, 38)):
+            rect = pygame.Rect(0, 0, glowW, glowH).inflate(
+                -shrink * 2, -shrink * 2)
+            pygame.draw.rect(surface, (90, 190, 205, alpha), rect,
+                             border_radius=16)
+        paddleGlowCache[key] = pygame.transform.smoothscale(
+            surface, (glowW // 2, glowH // 2)).convert_alpha()
+        paddleGlowCache[key] = pygame.transform.smoothscale(
+            paddleGlowCache[key], (glowW, glowH)).convert_alpha()
+    return paddleGlowCache[key]
+
+
+# Bola inti yang halus (anti-aliased) dan di-cache
+def getBallSurface(radius, color):
+    key = (radius, color)
+    if key not in ballSurfaceCache:
+        scale = 4
+        size = radius * 2 * scale
+        surface = pygame.Surface((size, size), pygame.SRCALPHA)
+        center = size // 2
+        pygame.draw.circle(surface, color, (center, center), radius * scale)
+        pygame.draw.circle(surface, (255, 255, 255),
+                           (center - radius * scale // 3,
+                            center - radius * scale // 3),
+                           max(1, radius * scale // 3))
+        ballSurfaceCache[key] = pygame.transform.smoothscale(
+            surface, (radius * 2, radius * 2)).convert_alpha()
+    return ballSurfaceCache[key]
+
+
+# Lingkaran trail anti-aliased untuk tiap radius dan tingkat alpha
+def precomputeTrailCircles():
+    scale = 3
+    for radius in range(2, 8):
+        size = radius * 2 * scale
+        base = pygame.Surface((size, size), pygame.SRCALPHA)
+        pygame.draw.circle(base, BALL_TRAIL,
+                           (size // 2, size // 2), radius * scale)
+        base = pygame.transform.smoothscale(
+            base, (radius * 2, radius * 2)).convert_alpha()
+
+        for step in range(0, 17):
+            circle = base.copy()
+            circle.set_alpha(int(255 * step / 16 * 0.55))
+            trailCircleCache[(radius, step)] = circle
+
+
+# Power-up: kapsul lebih besar dengan ikon vektor
+def getPowerUpSurface(kind):
+    if kind in powerUpSurfaceCache:
+        return powerUpSurfaceCache[kind]
+
+    width, height = POWERUP_W, POWERUP_H
+    color = POWERUP_COLORS[kind]
+    surface = makeRoundedSurface(
+        width, height, height // 2,
+        blendColor(color, (255, 255, 255), 0.3),
+        blendColor(color, (10, 12, 24), 0.35)).copy()
+    pygame.draw.rect(surface, blendColor(color, (255, 255, 255), 0.45),
+                     surface.get_rect(), 1, border_radius=height // 2)
+
+    # Ikon digambar pada resolusi 3x agar tepinya halus
+    scale = 3
+    icon = pygame.Surface((width * scale, height * scale),
+                          pygame.SRCALPHA)
+    iconColor = (250, 252, 255)
+    cx, cy = width * scale // 2, height * scale // 2
+    unit = height * scale // 5
+
+    if kind == POWERUP_PADDLE:
+        # Panah ganda kiri-kanan
+        for direction in (-1, 1):
+            tipX = cx + direction * unit * 2
+            pygame.draw.lines(icon, iconColor, False, [
+                (tipX - direction * unit, cy - unit),
+                (tipX, cy),
+                (tipX - direction * unit, cy + unit)], max(1, scale))
+    elif kind == POWERUP_SLOW:
+        # Jam: lingkaran dengan jarum
+        pygame.draw.circle(icon, iconColor, (cx, cy), unit * 2, max(1, scale))
+        pygame.draw.line(icon, iconColor, (cx, cy), (cx, cy - unit),
+                         max(1, scale))
+        pygame.draw.line(icon, iconColor, (cx, cy), (cx + unit, cy),
+                         max(1, scale))
+    else:
+        # Hati untuk tambahan nyawa
+        radius = unit
+        leftX, rightX = cx - radius * 0.55, cx + radius * 0.55
+        pygame.draw.circle(icon, iconColor,
+                           (int(leftX), int(cy - unit * 0.4)), radius)
+        pygame.draw.circle(icon, iconColor,
+                           (int(rightX), int(cy - unit * 0.4)), radius)
+        pygame.draw.polygon(icon, iconColor, [
+            (int(cx - radius * 1.55), int(cy - unit * 0.2)),
+            (int(cx + radius * 1.55), int(cy - unit * 0.2)),
+            (int(cx), int(cy + unit * 1.6))])
+
+    icon = pygame.transform.smoothscale(
+        icon, (width, height)).convert_alpha()
+    surface.blit(icon, (0, 0))
+    powerUpSurfaceCache[kind] = surface
+    return surface
+
+
+# Glow kapsul sesuai jenis power-up
+def getPowerUpGlow(kind):
+    if kind in powerUpGlowCache:
+        return powerUpGlowCache[kind]
+
+    color = POWERUP_COLORS[kind]
+    glowW, glowH = POWERUP_W + 24, POWERUP_H + 24
+    surface = pygame.Surface((glowW, glowH), pygame.SRCALPHA)
+    for shrink, alpha in ((0, 24), (4, 34), (8, 44)):
+        rect = pygame.Rect(0, 0, glowW, glowH).inflate(
+            -shrink * 2, -shrink * 2)
+        pygame.draw.rect(surface, (color[0], color[1], color[2], alpha),
+                         rect, border_radius=rect.height // 2)
+
+    small = pygame.transform.smoothscale(
+        surface, (glowW // 2, glowH // 2))
+    powerUpGlowCache[kind] = pygame.transform.smoothscale(
+        small, (glowW, glowH)).convert_alpha()
+    return powerUpGlowCache[kind]
+
+
+# Membuat efek glow bola (beberapa tingkat denyut) sekali saja
+def createGlowSurface(radius, boost=1.0):
+    size = radius * 7
     glow = pygame.Surface((size, size), pygame.SRCALPHA)
     center = size // 2
-    for glowRadius, alpha in ((radius * 3, 25),
-                              (radius * 2, 45),
-                              (radius + 2, 90)):
+    for glowRadius, alpha in ((radius * 3, 24),
+                              (radius * 2, 42),
+                              (radius + 2, 88)):
+        alpha = max(0, min(255, int(alpha * boost)))
         pygame.draw.circle(glow, (BALL_GLOW[0], BALL_GLOW[1],
                                   BALL_GLOW[2], alpha),
                            (center, center), glowRadius)
-    return glow
+    return glow.convert_alpha()
 
 
 # Background gradasi dibuat sekali, lalu di-blit tiap frame
 backgroundSurface = createGradientSurface(DARK_BLUE, DARK_PURPLE, HEIGHT)
+
+# Siapkan semua surface trail di awal agar tidak ada Surface baru di loop
+precomputeTrailCircles()
 
 
 # Membuat nada sederhana (gelombang sinus) tanpa file eksternal
@@ -329,27 +539,21 @@ class Striker:
 
     # Used to render the object on the screen
     def display(self, flash=False):
-        # Striker dengan sudut membulat dan warna tema
-        pygame.draw.rect(screen, STRIKER_COLOR, self.strikerRect,
-                         border_radius=8)
+        width = self.strikerRect.width
+        height = self.strikerRect.height
 
-        # Kilau di bagian atas agar terlihat lebih menarik
-        highlight = pygame.Rect(self.strikerRect.x + 5,
-                                self.strikerRect.y + 3,
-                                self.strikerRect.width - 10, 5)
-        pygame.draw.rect(screen, STRIKER_HIGHLIGHT, highlight,
-                         border_radius=3)
+        # Glow lembut di belakang papan kaca
+        glow = getPaddleGlow(width, height)
+        screen.blit(glow, glow.get_rect(center=self.strikerRect.center))
 
-        # Garis tepi tipis, lebih terang saat bola memantul
-        borderColor = WHITE if flash else STRIKER_BORDER
-        pygame.draw.rect(screen, borderColor, self.strikerRect,
-                         3 if flash else 2, border_radius=8)
+        # Papan semi-transparan dengan border tipis terang
+        surface = getPaddleSurface(width, height)
+        screen.blit(surface, self.strikerRect.topleft)
 
-        # Kilau tambahan di sekitar striker saat memantul
+        # Kilau tambahan singkat saat bola memantul
         if flash:
-            pygame.draw.rect(screen, BALL_GLOW,
-                             self.strikerRect.inflate(6, 6), 2,
-                             border_radius=10)
+            pygame.draw.rect(screen, (235, 250, 252),
+                             self.strikerRect, 1, border_radius=height // 2)
 
     # Used to update the state of the object
     def update(self, xFac):
@@ -417,9 +621,10 @@ class Block:
                                       self.width, self.height)
             screen.blit(surface, self.blockRect.topleft)
 
-            # Garis tepi tipis
-            pygame.draw.rect(screen, BLOCK_BORDER, self.blockRect, 1,
-                             border_radius=BLOCK_RADIUS)
+            # Retakan tipis saat balok sudah terkena pukulan
+            if healthRatio < 1:
+                screen.blit(getCrackSurface(self.width, self.height),
+                            self.blockRect.topleft)
 
     # Used to decrease the health of the block
     def hit(self):
@@ -454,9 +659,12 @@ class Ball:
         self.color = color
         self.xFac, self.yFac = 1, 1
 
-        # Jejak bola dan efek glow (tampilan saja)
+        # Jejak bola dan beberapa frame glow untuk denyut halus
         self.trail = []
-        self.glow = createGlowSurface(self.radius)
+        self.glowFrames = []
+        for i in range(BALL_GLOW_FRAMES):
+            boost = 0.75 + 0.5 * (i / (BALL_GLOW_FRAMES - 1))
+            self.glowFrames.append(createGlowSurface(self.radius, boost))
 
         self.ball = pygame.draw.circle(
             screen, self.color, (self.posx,
@@ -464,23 +672,24 @@ class Ball:
 
     # Used to display the object on the screen
     def display(self):
-        # Glow di belakang bola
-        screen.blit(self.glow,
-                    (self.posx - self.glow.get_width()//2,
-                     self.posy - self.glow.get_height()//2))
+        # Glow berdenyut mengikuti gelombang sinus
+        pulse = (math.sin(pygame.time.get_ticks() / 320.0) + 1) / 2
+        glow = self.glowFrames[int(pulse * (BALL_GLOW_FRAMES - 1))]
+        screen.blit(glow, glow.get_rect(
+            center=(int(self.posx), int(self.posy))))
 
-        # Jejak bola, makin lama makin pudar dan kecil
+        # Jejak bola: lingkaran anti-aliased yang mengecil dan memudar
         for i, (trailX, trailY) in enumerate(self.trail):
             factor = (i + 1) / (len(self.trail) + 1)
-            trailColor = blendColor(BALL_TRAIL, DARK_PURPLE, 1 - factor)
-            radius = max(2, int(self.radius * factor))
-            pygame.draw.circle(screen, trailColor,
-                               (int(trailX), int(trailY)), radius)
+            radius = max(2, min(7, int(self.radius * factor) + 1))
+            circle = trailCircleCache[(radius, int(factor * 16))]
+            screen.blit(circle, circle.get_rect(
+                center=(int(trailX), int(trailY))))
 
-        # Bola utama
-        self.ball = pygame.draw.circle(
-            screen, self.color, (int(self.posx),
-                                 int(self.posy)), self.radius)
+        # Bola utama yang halus
+        core = getBallSurface(self.radius, self.color)
+        screen.blit(core, core.get_rect(
+            center=(int(self.posx), int(self.posy))))
 
     # Used to update the state of the object
     def update(self):
@@ -564,7 +773,7 @@ class Ball:
 class PowerUp:
     def __init__(self, posx, posy, kind):
         self.posx, self.posy = posx, posy
-        self.width, self.height = 26, 12
+        self.width, self.height = POWERUP_W, POWERUP_H
         self.speed = POWERUP_SPEED
         self.kind = kind
         self.color = POWERUP_COLORS[kind]
@@ -574,10 +783,13 @@ class PowerUp:
             self.posx - self.width//2, self.posy,
             self.width, self.height)
 
-    # Menampilkan power-up sebagai kapsul berwarna
+    # Menampilkan kapsul berikon dengan glow sesuai jenis
     def display(self):
-        pygame.draw.rect(screen, self.color, self.powerUpRect,
-                         border_radius=6)
+        glow = getPowerUpGlow(self.kind)
+        screen.blit(glow, glow.get_rect(center=self.powerUpRect.center))
+
+        surface = getPowerUpSurface(self.kind)
+        screen.blit(surface, self.powerUpRect.topleft)
 
     # Jatuh ke bawah; True jika sudah melewati bawah layar
     def update(self):
