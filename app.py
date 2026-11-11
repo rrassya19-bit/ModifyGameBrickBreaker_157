@@ -15,6 +15,23 @@ BLUE = (0, 120, 255)
 YELLOW = (255, 255, 0)
 ORANGE = (255, 140, 0)
 
+# Tema warna tampilan
+DARK_BLUE = (14, 20, 55)
+DARK_PURPLE = (52, 16, 78)
+BLOCK_DARK = (25, 28, 45)
+BLOCK_BORDER = (12, 14, 26)
+BLOCK_GREEN_TOP = (120, 255, 150)
+BLOCK_GREEN_BOTTOM = (20, 160, 70)
+BLOCK_WHITE_TOP = (245, 248, 255)
+BLOCK_WHITE_BOTTOM = (175, 190, 215)
+BLOCK_RED_TOP = (255, 140, 140)
+BLOCK_RED_BOTTOM = (180, 25, 45)
+STRIKER_COLOR = (60, 170, 255)
+STRIKER_HIGHLIGHT = (170, 220, 255)
+STRIKER_BORDER = (220, 240, 255)
+BALL_GLOW = (90, 200, 255)
+BALL_TRAIL = (140, 210, 255)
+
 font = pygame.font.Font('freesansbold.ttf', 15)
 
 # Font lebih besar untuk judul dan layar status
@@ -49,6 +66,90 @@ POWERUP_COLORS = {
     POWERUP_LIFE: ORANGE
 }
 
+# Pengaturan tampilan
+BLOCK_RADIUS = 4
+BALL_TRAIL_LENGTH = 8
+
+# Cache permukaan balok agar gradasi tidak dibuat ulang tiap frame
+blockSurfaceCache = {}
+
+
+# Mencampur dua warna (t = 0..1)
+def blendColor(colorA, colorB, t):
+    return (int(colorA[0] + (colorB[0] - colorA[0]) * t),
+            int(colorA[1] + (colorB[1] - colorA[1]) * t),
+            int(colorA[2] + (colorB[2] - colorA[2]) * t))
+
+
+# Membuat permukaan gradasi vertikal untuk background
+def createGradientSurface(topColor, bottomColor, height):
+    surface = pygame.Surface((WIDTH, height))
+    for y in range(height):
+        factor = y / height
+        pygame.draw.line(surface, blendColor(topColor, bottomColor, factor),
+                         (0, y), (WIDTH, y))
+    return surface
+
+
+# Membuat permukaan gradasi vertikal dengan sudut membulat
+def createRoundedGradientSurface(width, height,
+                                 topColor, bottomColor, radius):
+    gradient = pygame.Surface((width, height), pygame.SRCALPHA)
+    for y in range(height):
+        factor = y / max(1, height - 1)
+        pygame.draw.line(gradient, blendColor(topColor, bottomColor, factor),
+                         (0, y), (width, y))
+
+    # Masking sudut membulat
+    mask = pygame.Surface((width, height), pygame.SRCALPHA)
+    pygame.draw.rect(mask, (255, 255, 255, 255), mask.get_rect(),
+                     border_radius=radius)
+    gradient.blit(mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+    return gradient
+
+
+# Warna balok sesuai jenis dan sisa health
+def blockColors(color, healthRatio):
+    if color == RED:
+        topColor, bottomColor = BLOCK_RED_TOP, BLOCK_RED_BOTTOM
+    elif color == WHITE:
+        topColor, bottomColor = BLOCK_WHITE_TOP, BLOCK_WHITE_BOTTOM
+    else:
+        topColor, bottomColor = BLOCK_GREEN_TOP, BLOCK_GREEN_BOTTOM
+
+    # Semakin kecil health, warna makin gelap
+    darken = 0.45 + 0.55 * healthRatio
+    return (blendColor(topColor, BLOCK_DARK, 1 - darken),
+            blendColor(bottomColor, BLOCK_DARK, 1 - darken))
+
+
+# Mengambil permukaan balok dari cache (dibuat sekali per warna/health)
+def getBlockSurface(color, healthRatio, width, height):
+    key = (color, round(healthRatio, 2), width, height)
+    if key not in blockSurfaceCache:
+        topColor, bottomColor = blockColors(color, healthRatio)
+        blockSurfaceCache[key] = createRoundedGradientSurface(
+            width, height, topColor, bottomColor, BLOCK_RADIUS)
+    return blockSurfaceCache[key]
+
+
+# Membuat efek glow bola sekali saja
+def createGlowSurface(radius):
+    size = radius * 6
+    glow = pygame.Surface((size, size), pygame.SRCALPHA)
+    center = size // 2
+    for glowRadius, alpha in ((radius * 3, 25),
+                              (radius * 2, 45),
+                              (radius + 2, 90)):
+        pygame.draw.circle(glow, (BALL_GLOW[0], BALL_GLOW[1],
+                                  BALL_GLOW[2], alpha),
+                           (center, center), glowRadius)
+    return glow
+
+
+# Background gradasi dibuat sekali, lalu di-blit tiap frame
+backgroundSurface = createGradientSurface(DARK_BLUE, DARK_PURPLE, HEIGHT)
+
 
 # Striker class
 class Striker:
@@ -67,8 +168,20 @@ class Striker:
 
     # Used to render the object on the screen
     def display(self):
-        self.striker = pygame.draw.rect(screen, 
-                            self.color, self.strikerRect)
+        # Striker dengan sudut membulat dan warna tema
+        pygame.draw.rect(screen, STRIKER_COLOR, self.strikerRect,
+                         border_radius=8)
+
+        # Kilau di bagian atas agar terlihat lebih menarik
+        highlight = pygame.Rect(self.strikerRect.x + 5,
+                                self.strikerRect.y + 3,
+                                self.strikerRect.width - 10, 5)
+        pygame.draw.rect(screen, STRIKER_HIGHLIGHT, highlight,
+                         border_radius=3)
+
+        # Garis tepi tipis
+        pygame.draw.rect(screen, STRIKER_BORDER, self.strikerRect, 2,
+                         border_radius=8)
 
     # Used to update the state of the object
     def update(self, xFac):
@@ -116,6 +229,9 @@ class Block:
         else:
             self.health = 100
 
+        # Health maksimal dipakai untuk menentukan warna balok
+        self.maxHealth = self.health
+
         # The rect variable is used to handle the placement 
         # and the collisions of the object
         self.blockRect = pygame.Rect(
@@ -127,8 +243,15 @@ class Block:
     # if its health is greater than 0
     def display(self):
         if self.health > 0:
-            self.brick = pygame.draw.rect(screen, 
-                                self.color, self.blockRect)
+            # Warna berubah sesuai sisa health
+            healthRatio = self.health / self.maxHealth
+            surface = getBlockSurface(self.color, healthRatio,
+                                      self.width, self.height)
+            screen.blit(surface, self.blockRect.topleft)
+
+            # Garis tepi tipis
+            pygame.draw.rect(screen, BLOCK_BORDER, self.blockRect, 1,
+                             border_radius=BLOCK_RADIUS)
 
     # Used to decrease the health of the block
     def hit(self):
@@ -163,20 +286,43 @@ class Ball:
         self.color = color
         self.xFac, self.yFac = 1, 1
 
+        # Jejak bola dan efek glow (tampilan saja)
+        self.trail = []
+        self.glow = createGlowSurface(self.radius)
+
         self.ball = pygame.draw.circle(
             screen, self.color, (self.posx,
                                  self.posy), self.radius)
 
     # Used to display the object on the screen
     def display(self):
+        # Glow di belakang bola
+        screen.blit(self.glow,
+                    (self.posx - self.glow.get_width()//2,
+                     self.posy - self.glow.get_height()//2))
+
+        # Jejak bola, makin lama makin pudar dan kecil
+        for i, (trailX, trailY) in enumerate(self.trail):
+            factor = (i + 1) / (len(self.trail) + 1)
+            trailColor = blendColor(BALL_TRAIL, DARK_PURPLE, 1 - factor)
+            radius = max(2, int(self.radius * factor))
+            pygame.draw.circle(screen, trailColor,
+                               (int(trailX), int(trailY)), radius)
+
+        # Bola utama
         self.ball = pygame.draw.circle(
-            screen, self.color, (self.posx, 
-                                 self.posy), self.radius)
+            screen, self.color, (int(self.posx),
+                                 int(self.posy)), self.radius)
 
     # Used to update the state of the object
     def update(self):
         self.posx += self.xFac*self.speed
         self.posy += self.yFac*self.speed
+
+        # Simpan posisi terakhir untuk jejak bola
+        self.trail.append((self.posx, self.posy))
+        if len(self.trail) > BALL_TRAIL_LENGTH:
+            self.trail.pop(0)
 
         # Reflecting the ball if it touches
         # either of the vertical edges
@@ -202,6 +348,8 @@ class Ball:
         self.posy = strikerRect.top - self.radius - 1
         # Luncurkan bola lurus ke atas menjauhi striker
         self.xFac, self.yFac = 0, -1
+        # Bersihkan jejak agar tidak menyambung dari posisi lama
+        self.trail = []
 
     # Used to change the direction along Y axis
     def hit(self):
@@ -384,7 +532,7 @@ def startScreen():
                 if event.key == pygame.K_SPACE:
                     return True
 
-        screen.fill(BLACK)
+        screen.blit(backgroundSurface, (0, 0))
 
         titleText = titleFont.render("BLOCK BREAKER", True, WHITE)
         titleRect = titleText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
@@ -413,7 +561,7 @@ def gameOver(score):
                 if event.key == pygame.K_ESCAPE:
                     return False
 
-        screen.fill(BLACK)
+        screen.blit(backgroundSurface, (0, 0))
 
         overText = titleFont.render("GAME OVER", True, RED)
         overRect = overText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
@@ -448,7 +596,7 @@ def winScreen(score):
                 if event.key == pygame.K_ESCAPE:
                     return False
 
-        screen.fill(BLACK)
+        screen.blit(backgroundSurface, (0, 0))
 
         winText = titleFont.render("YOU WIN", True, GREEN)
         winRect = winText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 70))
@@ -525,7 +673,7 @@ def main():
 
     # Game loop
     while running:
-        screen.fill(BLACK)
+        screen.blit(backgroundSurface, (0, 0))
 
         # Semua balok habis: tampilkan layar Level Complete
         if not listOfBlocks and not paused:
