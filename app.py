@@ -144,19 +144,29 @@ class Ball:
         return False
 
     # Resets the position of the ball
-    def reset(self):
-        self.posx = 0
-        self.posy = HEIGHT
-        self.xFac, self.yFac = 1, -1
+    # Bola diletakkan tepat di atas tengah striker, bukan di pojok kiri bawah
+    def reset(self, striker):
+        strikerRect = striker.getRect()
+        self.posx = strikerRect.centerx
+        self.posy = strikerRect.top - self.radius - 1
+        # Luncurkan bola lurus ke atas menjauhi striker
+        self.xFac, self.yFac = 0, -1
 
     # Used to change the direction along Y axis
     def hit(self):
         self.yFac *= -1
 
-    # Returns the rect of the ball. In this case,
-    # it is the ball itself
+    # Used to change the direction along X axis
+    # Dipakai saat bola menabrak sisi samping balok
+    def hitSide(self):
+        self.xFac *= -1
+
+    # Returns the rect of the ball based on its
+    # current position, so collision is always up to date
     def getRect(self):
-        return self.ball
+        return pygame.Rect(self.posx - self.radius,
+                           self.posy - self.radius,
+                           self.radius * 2, self.radius * 2)
 
 # Helper Functions
 
@@ -168,6 +178,55 @@ def collisionChecker(rect, ball):
         return True
 
     return False
+
+
+# Menentukan sisi tabrakan bola dengan balok (atas/bawah atau samping),
+# lalu memantulkan bola sesuai sisi tersebut
+def resolveBlockCollision(ball, blockRect):
+    ballRect = ball.getRect()
+
+    # Kedalaman bola menembus balok dari masing-masing sisi
+    overlapLeft = ballRect.right - blockRect.left
+    overlapRight = blockRect.right - ballRect.left
+    overlapTop = ballRect.bottom - blockRect.top
+    overlapBottom = blockRect.bottom - ballRect.top
+
+    # Sisi dengan kedalaman terkecil adalah sisi yang benar-benar ditabrak
+    minOverlap = min(overlapLeft, overlapRight, overlapTop, overlapBottom)
+
+    if minOverlap == overlapTop:
+        # Tabrakan dari atas: balik arah Y dan dorong bola ke atas
+        ball.hit()
+        ball.posy -= overlapTop
+    elif minOverlap == overlapBottom:
+        # Tabrakan dari bawah: balik arah Y dan dorong bola ke bawah
+        ball.hit()
+        ball.posy += overlapBottom
+    elif minOverlap == overlapLeft:
+        # Tabrakan dari samping kiri: balik arah X
+        ball.hitSide()
+        ball.posx -= overlapLeft
+    else:
+        # Tabrakan dari samping kanan: balik arah X
+        ball.hitSide()
+        ball.posx += overlapRight
+
+
+# Menangani pantulan bola pada striker berdasarkan titik pukul
+def strikerBounce(ball, strikerRect):
+    # Posisi relatif titik pukul terhadap tengah striker
+    # (-1 = paling kiri, 0 = tengah, 1 = paling kanan)
+    hitOffset = (ball.getRect().centerx -
+                 strikerRect.centerx) / (strikerRect.width / 2)
+    hitOffset = max(-1, min(1, hitOffset))
+
+    # Tengah striker = bola lurus ke atas, tepi = bola makin miring
+    ball.xFac = hitOffset
+    ball.yFac = -abs(ball.yFac)
+
+    # Letakkan bola tepat di atas striker agar tidak menempel
+    # dan memantul berulang di frame berikutnya
+    ball.posy = strikerRect.top - ball.radius - 1
 
 
 # Function used to populate the blocks
@@ -254,38 +313,44 @@ def main():
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_LEFT:
-                    strikerXFac = -1
-                if event.key == pygame.K_RIGHT:
-                    strikerXFac = 1
 
-            if event.type == pygame.KEYUP:
-                if (event.key == pygame.K_LEFT or
-                                event.key == pygame.K_RIGHT):
-                    strikerXFac = 0
+        # Kontrol striker memakai key.get_pressed() agar gerakan
+        # tetap mulus walau dua tombol ditekan bergantian
+        keys = pygame.key.get_pressed()
+        strikerXFac = 0
+        if keys[pygame.K_LEFT]:
+            strikerXFac -= 1
+        if keys[pygame.K_RIGHT]:
+            strikerXFac += 1
+
+        # Update striker lebih dulu supaya posisinya terbaru saat tabrakan dicek
+        striker.update(strikerXFac)
 
         # Collision check
+        # Bola memantul dari striker sesuai titik pukul
         if(collisionChecker(striker.getRect(),
                             ball.getRect())):
-            ball.hit()
-        for block in listOfBlocks:
+            strikerBounce(ball, striker.getRect())
+
+        # Iterasi salinan list agar aman saat balok dihapus,
+        # dan hanya satu balok diproses per frame
+        for block in listOfBlocks[:]:
             if(collisionChecker(block.getRect(), ball.getRect())):
-                ball.hit()
+                resolveBlockCollision(ball, block.getRect())
                 block.hit()
 
                 if block.getHealth() <= 0:
-                    listOfBlocks.pop(listOfBlocks.index(block))
+                    # Hapus dari list asli, bukan saat iterasi list asli
+                    listOfBlocks.remove(block)
                     score += 5
+                break
 
         # Update
-        striker.update(strikerXFac)
         lifeLost = ball.update()
 
         if lifeLost:
             lives -= 1
-            ball.reset()
-            print(lives)
+            ball.reset(striker)
 
         # Display
         striker.display()
