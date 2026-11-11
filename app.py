@@ -155,6 +155,17 @@ SHAKE_STRENGTH = 4
 STRIKER_FLASH_TIME = 6
 FLOATING_TEXT_LIFE = 30
 
+# Background dinamis: aksen berganti tiap level, lalu berulang
+LEVEL_ACCENTS = ((52, 96, 140), VIOLET, TEAL, ROSE_GOLD)
+BG_FADE_FRAMES = 48
+VIGNETTE_ALPHA = 150
+
+# Starfield 3 lapis: (jumlah, kecepatan, ukuran, alpha dasar)
+STAR_LAYERS = ((34, 0.10, 1, 80),
+               (20, 0.20, 2, 130),
+               (10, 0.34, 2, 190))
+STAR_TWINKLE_SPEED = (0.018, 0.030, 0.045)
+
 # Lokasi file high score (di folder yang sama dengan file program)
 HIGHSCORE_FILE = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "highscore.txt")
@@ -191,6 +202,114 @@ def createGradientSurface(topColor, bottomColor, height):
         pygame.draw.line(surface, blendColor(topColor, bottomColor, factor),
                          (0, y), (WIDTH, y))
     return surface
+
+
+# Background per level: gradasi navy-indigo yang diberi aksen warna level
+levelBackgroundCache = {}
+
+
+def getLevelBackground(accentIndex):
+    key = accentIndex % len(LEVEL_ACCENTS)
+    if key not in levelBackgroundCache:
+        accent = LEVEL_ACCENTS[key]
+        topColor = blendColor(NAVY, accent, 0.22)
+        bottomColor = blendColor(INDIGO, accent, 0.16)
+        levelBackgroundCache[key] = createGradientSurface(
+            topColor, bottomColor, HEIGHT)
+    return levelBackgroundCache[key]
+
+
+# Bintang kecil yang sudah dihaluskan, di-cache per ukuran dan alpha
+starSpriteCache = {}
+
+
+def getStarSprite(size, alpha):
+    alpha = max(0, min(255, int(alpha)))
+    key = (size, alpha)
+    if key not in starSpriteCache:
+        scale = 4
+        big = pygame.Surface((size * scale, size * scale), pygame.SRCALPHA)
+        pygame.draw.circle(big, TEXT_SOFT,
+                           (size * scale // 2, size * scale // 2),
+                           max(1, size * scale // 2))
+        sprite = pygame.transform.smoothscale(
+            big, (size, size)).convert_alpha()
+        sprite.set_alpha(alpha)
+        starSpriteCache[key] = sprite
+    return starSpriteCache[key]
+
+
+# Posisi bintang disiapkan sekali agar tidak diacak tiap frame
+stars = []
+for layer, (count, speed, size, baseAlpha) in enumerate(STAR_LAYERS):
+    for _ in range(count):
+        stars.append({
+            "x": random.randint(0, WIDTH),
+            "y": random.randint(0, HEIGHT),
+            "layer": layer,
+            "phase": random.uniform(0, math.pi * 2),
+            "twinkle": STAR_TWINKLE_SPEED[layer] *
+                       random.uniform(0.7, 1.3)
+        })
+
+
+# Bintang bergerak pelan ke bawah; yang keluar layar muncul lagi di atas
+def updateStars():
+    for star in stars:
+        _, speed, _, _ = STAR_LAYERS[star["layer"]]
+        star["y"] = (star["y"] + speed) % (HEIGHT + 4)
+        star["phase"] += star["twinkle"]
+
+
+# Menggambar bintang dengan kedip halus sesuai fase masing-masing
+def drawStars():
+    for star in stars:
+        _, _, size, baseAlpha = STAR_LAYERS[star["layer"]]
+        twinkle = 0.55 + 0.45 * math.sin(star["phase"])
+        # Alpha dibulatkan ke kelipatan 16 agar cache tidak terus bertambah
+        alpha = int(baseAlpha * twinkle)
+        alpha -= alpha % 16
+        sprite = getStarSprite(size, alpha)
+        screen.blit(sprite, (int(star["x"]), int(star["y"])))
+
+
+# Vignette tipis: dibuat sekali dari gradasi radial beresolusi kecil
+def createVignetteSurface():
+    smallW, smallH = WIDTH // 4, HEIGHT // 4
+    small = pygame.Surface((smallW, smallH), pygame.SRCALPHA)
+    centerX, centerY = smallW / 2, smallH / 2
+    maxDist = math.hypot(centerX, centerY)
+
+    for y in range(smallH):
+        for x in range(smallW):
+            dist = math.hypot(x - centerX, y - centerY) / maxDist
+            edge = max(0.0, (dist - 0.55) / 0.45)
+            alpha = int(VIGNETTE_ALPHA * edge * edge)
+            if alpha > 0:
+                small.set_at((x, y), (4, 6, 14, alpha))
+
+    return pygame.transform.smoothscale(
+        small, (WIDTH, HEIGHT)).convert_alpha()
+
+
+vignetteSurface = createVignetteSurface()
+
+
+# Latar lengkap: gradasi level (dengan crossfade), bintang, lalu vignette
+def drawBackground(accentIndex, prevAccentIndex=None, fade=1.0):
+    if prevAccentIndex is None or fade >= 1.0:
+        screen.blit(getLevelBackground(accentIndex), (0, 0))
+    else:
+        # Crossfade halus dari warna level lama ke warna level baru
+        screen.blit(getLevelBackground(prevAccentIndex), (0, 0))
+        incoming = getLevelBackground(accentIndex)
+        incoming.set_alpha(int(255 * fade))
+        screen.blit(incoming, (0, 0))
+        incoming.set_alpha(255)
+
+    drawStars()
+    screen.blit(vignetteSurface, (0, 0))
+
 
 
 # Membuat permukaan gradasi vertikal dengan sudut membulat (supersampling 3x)
@@ -974,7 +1093,8 @@ def startScreen(highScore):
                 if event.key == pygame.K_m:
                     toggleMute()
 
-        screen.blit(backgroundSurface, (0, 0))
+        updateStars()
+        drawBackground(0)
 
         titleText = renderTextCached("BLOCK BREAKER", 42, TEXT_SOFT, True)
         titleRect = titleText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
@@ -1023,7 +1143,8 @@ def gameOver(score):
                 if event.key == pygame.K_m:
                     toggleMute()
 
-        screen.blit(backgroundSurface, (0, 0))
+        updateStars()
+        drawBackground(0)
 
         overText = renderTextCached("GAME OVER", 38, ROSE_GOLD, True)
         overRect = overText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
@@ -1064,7 +1185,8 @@ def winScreen(score):
                 if event.key == pygame.K_m:
                     toggleMute()
 
-        screen.blit(backgroundSurface, (0, 0))
+        updateStars()
+        drawBackground(0)
 
         winText = renderTextCached("YOU WIN", 38, TEAL, True)
         winRect = winText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 70))
@@ -1127,6 +1249,11 @@ def main():
     score = 0
     level = 1
 
+    # Status crossfade warna background saat level berganti
+    bgAccent = 0
+    bgPrevAccent = 0
+    bgFade = 1.0
+
     # High score dibaca dari file saat game mulai
     highScore = loadHighScore()
 
@@ -1161,13 +1288,21 @@ def main():
 
     # Game loop
     while running:
-        screen.blit(backgroundSurface, (0, 0))
+        # Crossfade background berjalan sedikit tiap frame
+        if bgFade < 1.0:
+            bgFade = min(1.0, bgFade + 1.0 / BG_FADE_FRAMES)
+
+        updateStars()
+        drawBackground(bgAccent, bgPrevAccent, bgFade)
 
         # Semua balok habis: tampilkan layar Level Complete
         if not listOfBlocks and not paused:
             if winScreen(score):
                 # Lanjut ke level berikutnya
+                bgPrevAccent = bgAccent
                 level += 1
+                bgAccent = (level - 1) % len(LEVEL_ACCENTS)
+                bgFade = 0.0
                 # Kecepatan bola naik sedikit, dibatasi maksimal
                 ball.speedUp(SPEED_INCREMENT, MAX_BALL_SPEED)
                 listOfBlocks = populateBlocks(
@@ -1200,6 +1335,9 @@ def main():
             lives = 3
             score = 0
             level = 1
+            bgAccent = 0
+            bgPrevAccent = 0
+            bgFade = 1.0
             paused = False
             # Kembalikan kecepatan bola ke kecepatan awal
             ball.resetSpeed(BALL_SPEED)
@@ -1439,7 +1577,7 @@ def main():
             shakeX = random.randint(-SHAKE_STRENGTH, SHAKE_STRENGTH)
             shakeY = random.randint(-SHAKE_STRENGTH, SHAKE_STRENGTH)
             frame = screen.copy()
-            screen.blit(backgroundSurface, (0, 0))
+            drawBackground(bgAccent, bgPrevAccent, bgFade)
             screen.blit(frame, (shakeX, shakeY))
 
         pygame.display.update()
