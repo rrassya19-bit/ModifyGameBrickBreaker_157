@@ -186,6 +186,9 @@ MENU_BLOCK_COLS = 8
 LEVEL_ACCENTS = ((52, 96, 140), VIOLET, TEAL, ROSE_GOLD)
 BG_FADE_FRAMES = 48
 VIGNETTE_ALPHA = 150
+BLOOM_SCALE = 4
+BLOOM_ALPHA = 46
+QUALITY_LABEL_TIME = 100
 
 # Starfield 3 lapis: (jumlah, kecepatan, ukuran, alpha dasar)
 STAR_LAYERS = ((34, 0.10, 1, 80),
@@ -325,7 +328,9 @@ def updateStars():
 
 # Menggambar bintang dengan kedip halus sesuai fase masing-masing
 def drawStars():
-    for star in stars:
+    for starIndex, star in enumerate(stars):
+        if not effectsHighQuality and starIndex % 2:
+            continue
         _, _, size, baseAlpha = STAR_LAYERS[star["layer"]]
         twinkle = 0.55 + 0.45 * math.sin(star["phase"])
         # Alpha dibulatkan ke kelipatan 16 agar cache tidak terus bertambah
@@ -358,6 +363,12 @@ vignetteSurface = createVignetteSurface()
 
 # Buffer tetap untuk screen shake (tidak membuat Surface baru tiap frame)
 shakeBuffer = pygame.Surface((WIDTH, HEIGHT))
+bloomSource = pygame.Surface((WIDTH, HEIGHT))
+bloomSource.fill(BLACK)
+bloomSmall = pygame.Surface((WIDTH // BLOOM_SCALE, HEIGHT // BLOOM_SCALE))
+bloomFull = pygame.Surface((WIDTH, HEIGHT))
+effectsHighQuality = True
+qualityLabelTimer = 0
 
 
 # Latar lengkap: gradasi level (dengan crossfade), bintang, lalu vignette
@@ -374,6 +385,19 @@ def drawBackground(accentIndex, prevAccentIndex=None, fade=1.0):
 
     drawStars()
     screen.blit(vignetteSurface, (0, 0))
+
+
+# Bloom memakai buffer yang sudah disiapkan dan tidak membuat surface baru.
+def drawBloom():
+    if not effectsHighQuality:
+        return
+    bloomSource.fill(BLACK)
+    pygame.transform.smoothscale(
+        bloomSource, bloomSmall.get_size(), bloomSmall)
+    pygame.transform.smoothscale(bloomSmall, (WIDTH, HEIGHT), bloomFull)
+    bloomFull.set_alpha(BLOOM_ALPHA)
+    screen.blit(bloomFull, (0, 0), special_flags=pygame.BLEND_RGB_ADD)
+    bloomFull.set_alpha(255)
 
 
 # Overlay fade serba guna (dibuat sekali, alpha diatur tiap frame)
@@ -902,6 +926,8 @@ class Striker:
         # Glow lembut di belakang papan kaca
         glow = getPaddleGlow(width, height)
         screen.blit(glow, glow.get_rect(center=drawRect.center))
+        if effectsHighQuality:
+            bloomSource.blit(glow, glow.get_rect(center=drawRect.center))
 
         # Papan semi-transparan dengan border tipis terang
         surface = getPaddleSurface(width, height)
@@ -1083,6 +1109,9 @@ class Ball:
         glow = self.glowFrames[int(pulse * (BALL_GLOW_FRAMES - 1))]
         screen.blit(glow, glow.get_rect(
             center=(int(self.posx), int(self.posy))))
+        if effectsHighQuality:
+            bloomSource.blit(glow, glow.get_rect(
+                center=(int(self.posx), int(self.posy))))
 
         # Jejak bola: lingkaran anti-aliased yang mengecil dan memudar
         for i, (trailX, trailY) in enumerate(self.trail):
@@ -1193,6 +1222,9 @@ class PowerUp:
     def display(self):
         glow = getPowerUpGlow(self.kind)
         screen.blit(glow, glow.get_rect(center=self.powerUpRect.center))
+        if effectsHighQuality:
+            bloomSource.blit(glow, glow.get_rect(
+                center=self.powerUpRect.center))
 
         surface = getPowerUpSurface(self.kind)
         screen.blit(surface, self.powerUpRect.topleft)
@@ -1686,6 +1718,7 @@ def drawHeart(cx, cy, size, color):
 
 # Game Manager
 def main():
+    global effectsHighQuality, qualityLabelTimer
     running = True
     lives = 3
     score = 0
@@ -1841,6 +1874,10 @@ def main():
                 # Tombol P menjeda dan melanjutkan permainan
                 if event.key == pygame.K_p:
                     paused = not paused
+                # Tombol F mengganti kualitas efek visual.
+                if event.key == pygame.K_f:
+                    effectsHighQuality = not effectsHighQuality
+                    qualityLabelTimer = QUALITY_LABEL_TIME
                 # Tombol M untuk mute/unmute
                 if event.key == pygame.K_m:
                     toggleMute()
@@ -2033,8 +2070,9 @@ def main():
         for shockwave in shockwaves:
             shockwave.display()
 
-        for particle in particles:
-            particle.display()
+        for particleIndex, particle in enumerate(particles):
+            if effectsHighQuality or particleIndex % 2 == 0:
+                particle.display()
 
         for floatingText in floatingTexts:
             floatingText.display()
@@ -2131,6 +2169,17 @@ def main():
             screen.blit(pauseHint, pauseHint.get_rect(
                 center=(centreX, top + 184)))
 
+
+        # Tampilkan kualitas efek sebentar setelah tombol F ditekan.
+        if qualityLabelTimer > 0:
+            qualityText = renderTextCached(
+                "EFEK " + ("HIGH" if effectsHighQuality else "LOW"),
+                10, TEXT_DIM, True)
+            screen.blit(qualityText, qualityText.get_rect(
+                bottomright=(WIDTH - HUD_MARGIN, HEIGHT - 34)))
+            qualityLabelTimer -= 1
+
+        drawBloom()
 
         # Efek screen shake dengan amplitudo yang meluruh halus
         if shakeTimer > 0:
