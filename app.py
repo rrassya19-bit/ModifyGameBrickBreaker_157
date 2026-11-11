@@ -11,6 +11,9 @@ BLACK = (0, 0, 0)
 WHITE = (255, 255, 255)
 GREEN = (0, 255, 0)
 RED = (255, 0, 0)
+BLUE = (0, 120, 255)
+YELLOW = (255, 255, 0)
+ORANGE = (255, 140, 0)
 
 font = pygame.font.Font('freesansbold.ttf', 15)
 
@@ -27,6 +30,24 @@ FPS = 30
 # Kecepatan awal bola dan batas maksimal kecepatannya
 BALL_SPEED = 5
 MAX_BALL_SPEED = 9
+
+# Pengaturan power-up
+POWERUP_CHANCE = 0.2
+POWERUP_DURATION = 8 * FPS
+PADDLE_WIDTH = 100
+WIDE_PADDLE_WIDTH = 160
+SLOW_FACTOR = 0.6
+MAX_LIVES = 5
+
+# Jenis power-up dan warnanya
+POWERUP_PADDLE = "paddle"
+POWERUP_SLOW = "slow"
+POWERUP_LIFE = "life"
+POWERUP_COLORS = {
+    POWERUP_PADDLE: BLUE,
+    POWERUP_SLOW: YELLOW,
+    POWERUP_LIFE: ORANGE
+}
 
 
 # Striker class
@@ -62,6 +83,17 @@ class Striker:
 
         self.strikerRect = pygame.Rect(
             self.posx, self.posy, self.width, self.height)
+
+    # Mengubah lebar striker (dipakai efek power-up Paddle Besar)
+    def setWidth(self, width):
+        self.width = width
+        self.strikerRect = pygame.Rect(
+            self.posx, self.posy, self.width, self.height)
+
+        # Pastikan striker tetap berada di dalam layar
+        if self.posx + self.width > WIDTH:
+            self.posx = WIDTH - self.width
+            self.strikerRect.x = self.posx
 
     # Returns the rect of the object
     def getRect(self):
@@ -125,6 +157,9 @@ class Ball:
         self.posx, self.posy = posx, posy
         self.radius = radius
         self.speed = speed
+        # Kecepatan dasar (tanpa efek Slow Ball)
+        self.baseSpeed = speed
+        self.isSlowed = False
         self.color = color
         self.xFac, self.yFac = 1, 1
 
@@ -179,7 +214,26 @@ class Ball:
 
     # Menambah kecepatan bola sedikit tiap level, dibatasi maksimal
     def speedUp(self, amount, maxSpeed):
-        self.speed = min(self.speed + amount, maxSpeed)
+        self.baseSpeed = min(self.baseSpeed + amount, maxSpeed)
+        # Jika sedang slow, kecepatan efektif tetap mengikuti efeknya
+        if not self.isSlowed:
+            self.speed = self.baseSpeed
+
+    # Memperlambat bola sementara (efek Slow Ball)
+    def applySlow(self, factor):
+        self.speed = self.baseSpeed * factor
+        self.isSlowed = True
+
+    # Mengembalikan kecepatan bola seperti semula
+    def removeSlow(self):
+        self.speed = self.baseSpeed
+        self.isSlowed = False
+
+    # Mengembalikan kecepatan bola ke nilai awal (saat main lagi)
+    def resetSpeed(self, speed):
+        self.baseSpeed = speed
+        self.speed = speed
+        self.isSlowed = False
 
     # Returns the rect of the ball based on its
     # current position, so collision is always up to date
@@ -187,6 +241,39 @@ class Ball:
         return pygame.Rect(self.posx - self.radius,
                            self.posy - self.radius,
                            self.radius * 2, self.radius * 2)
+
+# PowerUp Class
+class PowerUp:
+    def __init__(self, posx, posy, kind):
+        self.posx, self.posy = posx, posy
+        self.width, self.height = 26, 12
+        self.speed = 3
+        self.kind = kind
+        self.color = POWERUP_COLORS[kind]
+
+        # Rect dipakai untuk deteksi tabrakan dengan striker
+        self.powerUpRect = pygame.Rect(
+            self.posx - self.width//2, self.posy,
+            self.width, self.height)
+
+    # Menampilkan power-up sebagai kapsul berwarna
+    def display(self):
+        pygame.draw.rect(screen, self.color, self.powerUpRect,
+                         border_radius=6)
+
+    # Jatuh ke bawah; True jika sudah melewati bawah layar
+    def update(self):
+        self.posy += self.speed
+        self.powerUpRect = pygame.Rect(
+            self.posx - self.width//2, self.posy,
+            self.width, self.height)
+
+        return self.powerUpRect.top > HEIGHT
+
+    # Returns the rect of the object
+    def getRect(self):
+        return self.powerUpRect
+
 
 # Helper Functions
 
@@ -413,7 +500,7 @@ def main():
     score = 0
     level = 1
 
-    striker = Striker(0, HEIGHT-50, 100, 20, 10, WHITE)
+    striker = Striker(0, HEIGHT-50, PADDLE_WIDTH, 20, 10, WHITE)
     strikerXFac = 0
 
     ball = Ball(0, HEIGHT-150, 7, BALL_SPEED, WHITE)
@@ -423,6 +510,10 @@ def main():
 
     listOfBlocks = populateBlocks(
         blockWidth, blockHeight, horizontalGap, verticalGap, level)
+
+    powerUps = []
+    paddleTimer = 0
+    slowTimer = 0
 
     # Tampilkan layar awal sebelum permainan dimulai
     if not startScreen():
@@ -446,6 +537,8 @@ def main():
                 listOfBlocks = populateBlocks(
                     blockWidth, blockHeight, horizontalGap, verticalGap,
                     level)
+                # Buang power-up yang masih jatuh dari level sebelumnya
+                powerUps = []
                 ball.reset(striker)
             else:
                 running = False
@@ -467,7 +560,12 @@ def main():
             level = 1
             paused = False
             # Kembalikan kecepatan bola ke kecepatan awal
-            ball.speed = BALL_SPEED
+            ball.resetSpeed(BALL_SPEED)
+            # Bersihkan semua efek dan power-up yang tersisa
+            powerUps = []
+            paddleTimer = 0
+            slowTimer = 0
+            striker.setWidth(PADDLE_WIDTH)
             listOfBlocks = populateBlocks(
                 blockWidth, blockHeight, horizontalGap, verticalGap, level)
             ball.reset(striker)
@@ -513,6 +611,15 @@ def main():
                         listOfBlocks.remove(block)
                         # Skor berbeda sesuai jenis balok
                         score += block.getScore()
+
+                        # Peluang sekitar 20% menjatuhkan power-up
+                        if random.random() < POWERUP_CHANCE:
+                            powerUps.append(PowerUp(
+                                block.getRect().centerx,
+                                block.getRect().centery,
+                                random.choice([POWERUP_PADDLE,
+                                               POWERUP_SLOW,
+                                               POWERUP_LIFE])))
                     break
 
             # Update
@@ -522,12 +629,45 @@ def main():
                 lives -= 1
                 ball.reset(striker)
 
+            # Update power-up: jatuh, diambil striker, atau hilang
+            for powerUp in powerUps[:]:
+                if powerUp.update():
+                    # Hilang karena sudah lewat bawah layar
+                    powerUps.remove(powerUp)
+                elif collisionChecker(powerUp.getRect(),
+                                      striker.getRect()):
+                    # Aktifkan efek sesuai jenis power-up
+                    if powerUp.kind == POWERUP_PADDLE:
+                        striker.setWidth(WIDE_PADDLE_WIDTH)
+                        paddleTimer = POWERUP_DURATION
+                    elif powerUp.kind == POWERUP_SLOW:
+                        ball.applySlow(SLOW_FACTOR)
+                        slowTimer = POWERUP_DURATION
+                    else:
+                        lives = min(lives + 1, MAX_LIVES)
+                    powerUps.remove(powerUp)
+
+            # Timer efek sementara (hanya berjalan saat tidak dijeda)
+            if paddleTimer > 0:
+                paddleTimer -= 1
+                if paddleTimer == 0:
+                    striker.setWidth(PADDLE_WIDTH)
+
+            if slowTimer > 0:
+                slowTimer -= 1
+                if slowTimer == 0:
+                    ball.removeSlow()
+
         # Display
         striker.display()
         ball.display()
 
         for block in listOfBlocks:
             block.display()
+
+        # Tampilkan power-up yang sedang jatuh
+        for powerUp in powerUps:
+            powerUp.display()
 
         # HUD dirender setelah state terbaru dihitung, lalu langsung
         # digambar di frame yang sama agar tidak tertinggal satu frame
@@ -546,6 +686,23 @@ def main():
         # Nyawa sebagai ikon hati di kanan bawah (berjajar dari kanan)
         for i in range(lives):
             drawHeart(WIDTH - 18 - i * 20, HEIGHT - 18, 14, RED)
+
+        # Status power-up aktif di kiri atas HUD
+        statusParts = []
+        if paddleTimer > 0:
+            statusParts.append("Paddle Besar " +
+                               str((paddleTimer + FPS - 1)//FPS) + "s")
+        if slowTimer > 0:
+            statusParts.append("Slow Ball " +
+                               str((slowTimer + FPS - 1)//FPS) + "s")
+
+        if statusParts:
+            statusText = font.render(
+                " | ".join(statusParts), True, YELLOW)
+            statusRect = statusText.get_rect(topleft=(8, 6))
+            # Latar hitam agar teks tetap terbaca di atas balok
+            pygame.draw.rect(screen, BLACK, statusRect.inflate(8, 4))
+            screen.blit(statusText, statusRect)
 
         # Tulisan PAUSED saat permainan dijeda
         if paused:
