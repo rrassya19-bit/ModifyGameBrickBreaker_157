@@ -69,6 +69,12 @@ POWERUP_COLORS = {
 # Pengaturan tampilan
 BLOCK_RADIUS = 4
 BALL_TRAIL_LENGTH = 8
+PARTICLE_COUNT = 12
+PARTICLE_LIFE = 22
+SHAKE_TIME = 12
+SHAKE_STRENGTH = 4
+STRIKER_FLASH_TIME = 6
+FLOATING_TEXT_LIFE = 30
 
 # Cache permukaan balok agar gradasi tidak dibuat ulang tiap frame
 blockSurfaceCache = {}
@@ -167,7 +173,7 @@ class Striker:
                                self.color, self.strikerRect)
 
     # Used to render the object on the screen
-    def display(self):
+    def display(self, flash=False):
         # Striker dengan sudut membulat dan warna tema
         pygame.draw.rect(screen, STRIKER_COLOR, self.strikerRect,
                          border_radius=8)
@@ -179,9 +185,16 @@ class Striker:
         pygame.draw.rect(screen, STRIKER_HIGHLIGHT, highlight,
                          border_radius=3)
 
-        # Garis tepi tipis
-        pygame.draw.rect(screen, STRIKER_BORDER, self.strikerRect, 2,
-                         border_radius=8)
+        # Garis tepi tipis, lebih terang saat bola memantul
+        borderColor = WHITE if flash else STRIKER_BORDER
+        pygame.draw.rect(screen, borderColor, self.strikerRect,
+                         3 if flash else 2, border_radius=8)
+
+        # Kilau tambahan di sekitar striker saat memantul
+        if flash:
+            pygame.draw.rect(screen, BALL_GLOW,
+                             self.strikerRect.inflate(6, 6), 2,
+                             border_radius=10)
 
     # Used to update the state of the object
     def update(self, xFac):
@@ -421,6 +434,57 @@ class PowerUp:
     # Returns the rect of the object
     def getRect(self):
         return self.powerUpRect
+
+
+# Particle Class
+class Particle:
+    def __init__(self, posx, posy, color):
+        self.posx, self.posy = posx, posy
+        self.color = color
+        self.radius = random.randint(2, 4)
+        self.xVel = random.uniform(-3, 3)
+        self.yVel = random.uniform(-4, 1)
+        self.life = random.randint(PARTICLE_LIFE - 7, PARTICLE_LIFE)
+        self.maxLife = self.life
+
+    # Bergerak menyebar dengan gravitasi ringan
+    def update(self):
+        self.posx += self.xVel
+        self.posy += self.yVel
+        self.yVel += 0.2
+        self.life -= 1
+
+        return self.life <= 0
+
+    # Partikel mengecil dan memudar seiring waktu
+    def display(self):
+        factor = max(0, self.life / self.maxLife)
+        radius = max(1, int(self.radius * factor))
+        fadeColor = blendColor(self.color, DARK_PURPLE, 1 - factor)
+        pygame.draw.circle(screen, fadeColor,
+                           (int(self.posx), int(self.posy)), radius)
+
+
+# FloatingText Class
+class FloatingText:
+    def __init__(self, posx, posy, text):
+        self.posx, self.posy = posx, posy
+        self.text = text
+        self.life = FLOATING_TEXT_LIFE
+        self.maxLife = FLOATING_TEXT_LIFE
+
+    # Teks naik sedikit lalu memudar
+    def update(self):
+        self.posy -= 1
+        self.life -= 1
+
+        return self.life <= 0
+
+    def display(self):
+        surface = font.render(self.text, True, YELLOW)
+        surface.set_alpha(int(255 * self.life / self.maxLife))
+        screen.blit(surface, surface.get_rect(
+            center=(int(self.posx), int(self.posy))))
 
 
 # Helper Functions
@@ -663,6 +727,12 @@ def main():
     paddleTimer = 0
     slowTimer = 0
 
+    # Efek visual dinamis
+    particles = []
+    floatingTexts = []
+    strikerFlashTimer = 0
+    shakeTimer = 0
+
     # Tampilkan layar awal sebelum permainan dimulai
     if not startScreen():
         return
@@ -687,6 +757,8 @@ def main():
                     level)
                 # Buang power-up yang masih jatuh dari level sebelumnya
                 powerUps = []
+                particles = []
+                floatingTexts = []
                 ball.reset(striker)
             else:
                 running = False
@@ -711,8 +783,12 @@ def main():
             ball.resetSpeed(BALL_SPEED)
             # Bersihkan semua efek dan power-up yang tersisa
             powerUps = []
+            particles = []
+            floatingTexts = []
             paddleTimer = 0
             slowTimer = 0
+            strikerFlashTimer = 0
+            shakeTimer = 0
             striker.setWidth(PADDLE_WIDTH)
             listOfBlocks = populateBlocks(
                 blockWidth, blockHeight, horizontalGap, verticalGap, level)
@@ -746,6 +822,8 @@ def main():
             if(collisionChecker(striker.getRect(),
                                 ball.getRect())):
                 strikerBounce(ball, striker.getRect())
+                # Kilau singkat pada striker saat bola memantul
+                strikerFlashTimer = STRIKER_FLASH_TIME
 
             # Iterasi salinan list agar aman saat balok dihapus,
             # dan hanya satu balok diproses per frame
@@ -758,7 +836,23 @@ def main():
                         # Hapus dari list asli, bukan saat iterasi list asli
                         listOfBlocks.remove(block)
                         # Skor berbeda sesuai jenis balok
-                        score += block.getScore()
+                        points = block.getScore()
+                        score += points
+
+                        # Partikel kecil sesuai warna balok
+                        particleColor = blockColors(
+                            block.color, 1.0)[0]
+                        for _ in range(PARTICLE_COUNT):
+                            particles.append(Particle(
+                                block.getRect().centerx,
+                                block.getRect().centery,
+                                particleColor))
+
+                        # Teks skor melayang di posisi balok
+                        floatingTexts.append(FloatingText(
+                            block.getRect().centerx,
+                            block.getRect().centery,
+                            "+" + str(points)))
 
                         # Peluang sekitar 20% menjatuhkan power-up
                         if random.random() < POWERUP_CHANCE:
@@ -776,6 +870,8 @@ def main():
             if lifeLost:
                 lives -= 1
                 ball.reset(striker)
+                # Screen shake ringan saat nyawa berkurang
+                shakeTimer = SHAKE_TIME
 
             # Update power-up: jatuh, diambil striker, atau hilang
             for powerUp in powerUps[:]:
@@ -806,8 +902,24 @@ def main():
                 if slowTimer == 0:
                     ball.removeSlow()
 
+            # Timer efek visual
+            if strikerFlashTimer > 0:
+                strikerFlashTimer -= 1
+
+            if shakeTimer > 0:
+                shakeTimer -= 1
+
+            # Update partikel dan teks skor melayang
+            for particle in particles[:]:
+                if particle.update():
+                    particles.remove(particle)
+
+            for floatingText in floatingTexts[:]:
+                if floatingText.update():
+                    floatingTexts.remove(floatingText)
+
         # Display
-        striker.display()
+        striker.display(strikerFlashTimer > 0)
         ball.display()
 
         for block in listOfBlocks:
@@ -816,6 +928,13 @@ def main():
         # Tampilkan power-up yang sedang jatuh
         for powerUp in powerUps:
             powerUp.display()
+
+        # Partikel dan teks skor melayang di atas balok
+        for particle in particles:
+            particle.display()
+
+        for floatingText in floatingTexts:
+            floatingText.display()
 
         # HUD dirender setelah state terbaru dihitung, lalu langsung
         # digambar di frame yang sama agar tidak tertinggal satu frame
@@ -864,6 +983,14 @@ def main():
             pauseHintRect = pauseHint.get_rect(
                 center=(WIDTH // 2, HEIGHT // 2 + 40))
             screen.blit(pauseHint, pauseHintRect)
+
+        # Efek screen shake ringan: geser seluruh frame sesaat
+        if shakeTimer > 0:
+            shakeX = random.randint(-SHAKE_STRENGTH, SHAKE_STRENGTH)
+            shakeY = random.randint(-SHAKE_STRENGTH, SHAKE_STRENGTH)
+            frame = screen.copy()
+            screen.blit(backgroundSurface, (0, 0))
+            screen.blit(frame, (shakeX, shakeY))
 
         pygame.display.update()
         clock.tick(FPS)
