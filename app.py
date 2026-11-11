@@ -24,6 +24,10 @@ pygame.display.set_caption("Block Breaker")
 clock = pygame.time.Clock()
 FPS = 30
 
+# Kecepatan awal bola dan batas maksimal kecepatannya
+BALL_SPEED = 5
+MAX_BALL_SPEED = 9
+
 
 # Striker class
 class Striker:
@@ -72,9 +76,10 @@ class Block:
         self.color = color
         self.damage = 100
 
-        # The white blocks have the health of 200. So, 
-        # the ball must hit it twice to break
-        if color == WHITE:
+        # Balok merah perlu 3x pukul, putih 2x, hijau 1x
+        if color == RED:
+            self.health = 300
+        elif color == WHITE:
             self.health = 200
         else:
             self.health = 100
@@ -104,6 +109,14 @@ class Block:
     # Used to get the health of the object
     def getHealth(self):
         return self.health
+
+    # Skor yang didapat sesuai jenis (warna) balok
+    def getScore(self):
+        if self.color == RED:
+            return 15
+        elif self.color == WHITE:
+            return 10
+        return 5
 
 
 # Ball Class
@@ -163,6 +176,10 @@ class Ball:
     # Dipakai saat bola menabrak sisi samping balok
     def hitSide(self):
         self.xFac *= -1
+
+    # Menambah kecepatan bola sedikit tiap level, dibatasi maksimal
+    def speedUp(self, amount, maxSpeed):
+        self.speed = min(self.speed + amount, maxSpeed)
 
     # Returns the rect of the ball based on its
     # current position, so collision is always up to date
@@ -233,15 +250,38 @@ def strikerBounce(ball, strikerRect):
 
 
 # Function used to populate the blocks
+# Pola balok berganti tiap level dan berulang setelah 3 pola
 def populateBlocks(blockWidth, blockHeight, 
-                   horizontalGap, verticalGap):
+                   horizontalGap, verticalGap, level):
     listOfBlocks = []
 
-    for i in range(0, WIDTH, blockWidth+horizontalGap):
-        for j in range(0, HEIGHT//2, blockHeight+verticalGap):
+    columnCount = len(range(0, WIDTH, blockWidth+horizontalGap))
+    rowCount = len(range(0, HEIGHT//2, blockHeight+verticalGap))
+
+    # 0 = penuh, 1 = selang-seling, 2 = piramida
+    pattern = (level - 1) % 3
+    center = (columnCount - 1) // 2
+
+    for column in range(columnCount):
+        for row in range(rowCount):
+            # Pola selang-seling: lewati balok bergantian
+            if pattern == 1 and (column + row) % 2 != 0:
+                continue
+
+            # Pola piramida: melebar ke bawah dari tengah
+            if pattern == 2:
+                if row > center:
+                    continue
+                if column < center - row or column > center + row:
+                    continue
+
+            posx = column * (blockWidth+horizontalGap)
+            posy = row * (blockHeight+verticalGap)
+
+            # Jenis balok acak: hijau (1x), putih (2x), merah (3x)
             listOfBlocks.append(
-                Block(i, j, blockWidth, blockHeight, 
-                      random.choice([WHITE, GREEN])))
+                Block(posx, posy, blockWidth, blockHeight, 
+                      random.choice([WHITE, GREEN, RED])))
 
     return listOfBlocks
 
@@ -376,13 +416,13 @@ def main():
     striker = Striker(0, HEIGHT-50, 100, 20, 10, WHITE)
     strikerXFac = 0
 
-    ball = Ball(0, HEIGHT-150, 7, 5, WHITE)
+    ball = Ball(0, HEIGHT-150, 7, BALL_SPEED, WHITE)
 
     blockWidth, blockHeight = 40, 15
     horizontalGap, verticalGap = 20, 20
 
     listOfBlocks = populateBlocks(
-        blockWidth, blockHeight, horizontalGap, verticalGap)
+        blockWidth, blockHeight, horizontalGap, verticalGap, level)
 
     # Tampilkan layar awal sebelum permainan dimulai
     if not startScreen():
@@ -401,8 +441,11 @@ def main():
             if winScreen(score):
                 # Lanjut ke level berikutnya
                 level += 1
+                # Kecepatan bola naik sedikit, dibatasi maksimal
+                ball.speedUp(0.5, MAX_BALL_SPEED)
                 listOfBlocks = populateBlocks(
-                    blockWidth, blockHeight, horizontalGap, verticalGap)
+                    blockWidth, blockHeight, horizontalGap, verticalGap,
+                    level)
                 ball.reset(striker)
             else:
                 running = False
@@ -423,8 +466,10 @@ def main():
             score = 0
             level = 1
             paused = False
+            # Kembalikan kecepatan bola ke kecepatan awal
+            ball.speed = BALL_SPEED
             listOfBlocks = populateBlocks(
-                blockWidth, blockHeight, horizontalGap, verticalGap)
+                blockWidth, blockHeight, horizontalGap, verticalGap, level)
             ball.reset(striker)
 
         # Event handling
@@ -466,7 +511,8 @@ def main():
                     if block.getHealth() <= 0:
                         # Hapus dari list asli, bukan saat iterasi list asli
                         listOfBlocks.remove(block)
-                        score += 5
+                        # Skor berbeda sesuai jenis balok
+                        score += block.getScore()
                     break
 
             # Update
