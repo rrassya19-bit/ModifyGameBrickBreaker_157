@@ -14,6 +14,9 @@ RED = (255, 0, 0)
 
 font = pygame.font.Font('freesansbold.ttf', 15)
 
+# Font lebih besar untuk judul dan layar status
+titleFont = pygame.font.Font('freesansbold.ttf', 40)
+
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Block Breaker")
 
@@ -243,12 +246,9 @@ def populateBlocks(blockWidth, blockHeight,
     return listOfBlocks
 
 
-# Once all the lives are over, this function waits until
-# exit or space bar is pressed and does the corresponding action
-def gameOver():
-    gameOver = True
-
-    while gameOver:
+# Layar awal dengan judul game dan petunjuk mulai
+def startScreen():
+    while True:
         # Event handling
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
@@ -256,6 +256,95 @@ def gameOver():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     return True
+
+        screen.fill(BLACK)
+
+        titleText = titleFont.render("BLOCK BREAKER", True, WHITE)
+        titleRect = titleText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
+        screen.blit(titleText, titleRect)
+
+        startText = font.render("Tekan SPACE untuk mulai", True, GREEN)
+        startRect = startText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
+        screen.blit(startText, startRect)
+
+        pygame.display.update()
+        clock.tick(FPS)
+
+
+# Once all the lives are over, this function waits until
+# exit or space bar is pressed and does the corresponding action
+def gameOver(score):
+    while True:
+        # Event handling
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.KEYDOWN:
+                # SPACE untuk main lagi, ESC untuk keluar
+                if event.key == pygame.K_SPACE:
+                    return True
+                if event.key == pygame.K_ESCAPE:
+                    return False
+
+        screen.fill(BLACK)
+
+        overText = titleFont.render("GAME OVER", True, RED)
+        overRect = overText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
+        screen.blit(overText, overRect)
+
+        finalScoreText = font.render(
+            "Skor akhir : " + str(score), True, WHITE)
+        finalScoreRect = finalScoreText.get_rect(
+            center=(WIDTH // 2, HEIGHT // 2 - 10))
+        screen.blit(finalScoreText, finalScoreRect)
+
+        hintText = font.render(
+            "Tekan SPACE untuk main lagi / ESC untuk keluar", True, WHITE)
+        hintRect = hintText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
+        screen.blit(hintText, hintRect)
+
+        pygame.display.update()
+        # Batasi frame rate agar CPU tidak penuh saat layar game over
+        clock.tick(FPS)
+
+
+# Layar saat semua balok habis (level selesai)
+def winScreen(score):
+    while True:
+        # Event handling
+        for event in pygame.event.get():
+            if event.type == pygame.QUIT:
+                return False
+            if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_SPACE:
+                    return True
+                if event.key == pygame.K_ESCAPE:
+                    return False
+
+        screen.fill(BLACK)
+
+        winText = titleFont.render("YOU WIN", True, GREEN)
+        winRect = winText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 70))
+        screen.blit(winText, winRect)
+
+        completeText = font.render("Level Complete", True, WHITE)
+        completeRect = completeText.get_rect(
+            center=(WIDTH // 2, HEIGHT // 2 - 25))
+        screen.blit(completeText, completeRect)
+
+        finalScoreText = font.render(
+            "Skor : " + str(score), True, WHITE)
+        finalScoreRect = finalScoreText.get_rect(
+            center=(WIDTH // 2, HEIGHT // 2 + 10))
+        screen.blit(finalScoreText, finalScoreRect)
+
+        hintText = font.render(
+            "Tekan SPACE untuk lanjut / ESC untuk keluar", True, WHITE)
+        hintRect = hintText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50))
+        screen.blit(hintText, hintRect)
+
+        pygame.display.update()
+        clock.tick(FPS)
 
 
 # Menggambar ikon hati kecil untuk HUD nyawa
@@ -295,69 +384,97 @@ def main():
     listOfBlocks = populateBlocks(
         blockWidth, blockHeight, horizontalGap, verticalGap)
 
+    # Tampilkan layar awal sebelum permainan dimulai
+    if not startScreen():
+        return
+
+    # Bola mulai dari atas striker saat permainan dimulai
+    ball.reset(striker)
+    paused = False
+
     # Game loop
     while running:
         screen.fill(BLACK)
 
-        # If all the blocks are destroyed, then we repopulate them
-        if not listOfBlocks:
-            listOfBlocks = populateBlocks(
-                blockWidth, blockHeight, horizontalGap, verticalGap)
+        # Semua balok habis: tampilkan layar Level Complete
+        if not listOfBlocks and not paused:
+            if winScreen(score):
+                # Lanjut ke level berikutnya
+                level += 1
+                listOfBlocks = populateBlocks(
+                    blockWidth, blockHeight, horizontalGap, verticalGap)
+                ball.reset(striker)
+            else:
+                running = False
+                continue
 
         # All the lives are over. So, the gameOver() function is called
         if lives <= 0:
-            running = gameOver()
+            running = gameOver(score)
 
-            while listOfBlocks:
-                listOfBlocks.pop(0)
+            # Keluar jika pemain memilih ESC
+            if not running:
+                continue
+
+            # reset sisa list lalu siapkan permainan baru
+            listOfBlocks = []
 
             lives = 3
             score = 0
+            level = 1
+            paused = False
             listOfBlocks = populateBlocks(
                 blockWidth, blockHeight, horizontalGap, verticalGap)
+            ball.reset(striker)
 
         # Event handling
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
+            if event.type == pygame.KEYDOWN:
+                # Tombol P menjeda dan melanjutkan permainan
+                if event.key == pygame.K_p:
+                    paused = not paused
 
-        # Kontrol striker memakai key.get_pressed() agar gerakan
-        # tetap mulus walau dua tombol ditekan bergantian
-        keys = pygame.key.get_pressed()
-        strikerXFac = 0
-        if keys[pygame.K_LEFT]:
-            strikerXFac -= 1
-        if keys[pygame.K_RIGHT]:
-            strikerXFac += 1
+        # Game hanya diperbarui jika tidak sedang dijeda
+        if not paused:
+            # Kontrol striker memakai key.get_pressed() agar gerakan
+            # tetap mulus walau dua tombol ditekan bergantian
+            keys = pygame.key.get_pressed()
+            strikerXFac = 0
+            if keys[pygame.K_LEFT]:
+                strikerXFac -= 1
+            if keys[pygame.K_RIGHT]:
+                strikerXFac += 1
 
-        # Update striker lebih dulu supaya posisinya terbaru saat tabrakan dicek
-        striker.update(strikerXFac)
+            # Update striker lebih dulu supaya posisinya terbaru saat tabrakan dicek
+            striker.update(strikerXFac)
 
-        # Collision check
-        # Bola memantul dari striker sesuai titik pukul
-        if(collisionChecker(striker.getRect(),
-                            ball.getRect())):
-            strikerBounce(ball, striker.getRect())
+            # Collision check
+            # Bola memantul dari striker sesuai titik pukul
+            if(collisionChecker(striker.getRect(),
+                                ball.getRect())):
+                strikerBounce(ball, striker.getRect())
 
-        # Iterasi salinan list agar aman saat balok dihapus,
-        # dan hanya satu balok diproses per frame
-        for block in listOfBlocks[:]:
-            if(collisionChecker(block.getRect(), ball.getRect())):
-                resolveBlockCollision(ball, block.getRect())
-                block.hit()
+            # Iterasi salinan list agar aman saat balok dihapus,
+            # dan hanya satu balok diproses per frame
+            for block in listOfBlocks[:]:
+                if(collisionChecker(block.getRect(), ball.getRect())):
+                    resolveBlockCollision(ball, block.getRect())
+                    block.hit()
 
-                if block.getHealth() <= 0:
-                    # Hapus dari list asli, bukan saat iterasi list asli
-                    listOfBlocks.remove(block)
-                    score += 5
-                break
+                    if block.getHealth() <= 0:
+                        # Hapus dari list asli, bukan saat iterasi list asli
+                        listOfBlocks.remove(block)
+                        score += 5
+                    break
 
-        # Update
-        lifeLost = ball.update()
+            # Update
+            lifeLost = ball.update()
 
-        if lifeLost:
-            lives -= 1
-            ball.reset(striker)
+            if lifeLost:
+                lives -= 1
+                ball.reset(striker)
 
         # Display
         striker.display()
@@ -383,6 +500,19 @@ def main():
         # Nyawa sebagai ikon hati di kanan bawah (berjajar dari kanan)
         for i in range(lives):
             drawHeart(WIDTH - 18 - i * 20, HEIGHT - 18, 14, RED)
+
+        # Tulisan PAUSED saat permainan dijeda
+        if paused:
+            pausedText = titleFont.render("PAUSED", True, WHITE)
+            pausedRect = pausedText.get_rect(
+                center=(WIDTH // 2, HEIGHT // 2))
+            screen.blit(pausedText, pausedRect)
+
+            pauseHint = font.render(
+                "Tekan P untuk melanjutkan", True, WHITE)
+            pauseHintRect = pauseHint.get_rect(
+                center=(WIDTH // 2, HEIGHT // 2 + 40))
+            screen.blit(pauseHint, pauseHintRect)
 
         pygame.display.update()
         clock.tick(FPS)
