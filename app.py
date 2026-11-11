@@ -176,6 +176,12 @@ FLOAT_RISE = 26
 INTRO_TOTAL_FRAMES = ((GRID_ROWS - 1) * BLOCK_INTRO_STAGGER +
                       BLOCK_INTRO_DURATION)
 
+# Transisi dan menu
+FADE_FRAMES = 14
+MENU_TITLE = "BLOCK BREAKER"
+MENU_BLOCK_ROWS = 3
+MENU_BLOCK_COLS = 8
+
 # Background dinamis: aksen berganti tiap level, lalu berulang
 LEVEL_ACCENTS = ((52, 96, 140), VIOLET, TEAL, ROSE_GOLD)
 BG_FADE_FRAMES = 48
@@ -208,6 +214,9 @@ ballSurfaceCache = {}
 trailCircleCache = {}
 flashSurfaceCache = {}
 shockwaveCache = {}
+glassPanelCache = {}
+titleGlowCache = {}
+badgeSurfaceCache = {}
 
 
 # Mencampur dua warna (t = 0..1)
@@ -365,6 +374,107 @@ def drawBackground(accentIndex, prevAccentIndex=None, fade=1.0):
 
     drawStars()
     screen.blit(vignetteSurface, (0, 0))
+
+
+# Overlay fade serba guna (dibuat sekali, alpha diatur tiap frame)
+fadeOverlay = pygame.Surface((WIDTH, HEIGHT))
+fadeOverlay.fill(NAVY)
+
+
+def drawFadeOverlay(alpha):
+    fadeOverlay.set_alpha(max(0, min(255, int(alpha))))
+    screen.blit(fadeOverlay, (0, 0))
+
+
+# Fade keluar dari layar yang sedang tampil sebelum pindah state
+def fadeOutCurrent(frames=FADE_FRAMES):
+    for step in range(frames):
+        drawFadeOverlay(255 * (step + 1) / frames)
+        pygame.display.update()
+        clock.tick(FPS)
+
+
+# Panel kaca membulat untuk overlay pause / game over / level complete
+def getGlassPanel(width, height, radius=18):
+    key = (width, height, radius)
+    if key not in glassPanelCache:
+        surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        pygame.draw.rect(surface, (14, 18, 36, 214),
+                         surface.get_rect(), border_radius=radius)
+        pygame.draw.rect(surface, (120, 140, 190, 80),
+                         surface.get_rect(), 1, border_radius=radius)
+        pygame.draw.line(surface, (226, 236, 250, 70),
+                         (radius, 2), (width - radius, 2), 1)
+        glassPanelCache[key] = surface.convert_alpha()
+    return glassPanelCache[key]
+
+
+# Glow emas lembut di belakang judul menu
+def getTitleGlow(width, height):
+    key = (width, height)
+    if key not in titleGlowCache:
+        small = pygame.Surface((width // 4, height // 4), pygame.SRCALPHA)
+        for i in range(5):
+            rect = pygame.Rect(0, 0, width // 4, height // 4).inflate(
+                -i * 6, -i * 4)
+            pygame.draw.ellipse(small, (GOLD[0], GOLD[1], GOLD[2], 16),
+                                rect)
+        titleGlowCache[key] = pygame.transform.smoothscale(
+            small, (width, height)).convert_alpha()
+    return titleGlowCache[key]
+
+
+# Lencana emas "NEW HIGH SCORE"
+def getBadgeSurface(text):
+    if text not in badgeSurfaceCache:
+        label = renderTextCached(text, 11, GOLD, True)
+        width = label.get_width() + 24
+        height = 24
+        surface = pygame.Surface((width, height), pygame.SRCALPHA)
+        pygame.draw.rect(surface, (44, 38, 24, 210),
+                         surface.get_rect(), border_radius=height // 2)
+        pygame.draw.rect(surface, GOLD, surface.get_rect(), 1,
+                         border_radius=height // 2)
+        surface.blit(label, label.get_rect(center=(width // 2, height // 2)))
+        badgeSurfaceCache[text] = surface.convert_alpha()
+    return badgeSurfaceCache[text]
+
+
+# Balok dekoratif di belakang menu beserta bola demo
+menuBlocks = []
+for menuRow in range(MENU_BLOCK_ROWS):
+    for menuCol in range(MENU_BLOCK_COLS):
+        menuBlocks.append((
+            60 + menuCol * 62,
+            88 + menuRow * 34,
+            (GREEN, WHITE, RED)[(menuRow + menuCol) % 3]))
+
+
+# Menggambar judul per huruf yang muncul bergantian dengan easing
+def drawMenuTitle(menuTimer):
+    titleY = 168
+    size = 44
+    letters = [(char, renderTextCached(char, size, GOLD, True))
+               for char in MENU_TITLE]
+    totalWidth = sum(surface.get_width() + 2
+                     for _, surface in letters) - 2
+
+    glow = getTitleGlow(470, 96)
+    glowProgress = clamp01((menuTimer - 4) / 24)
+    glow.set_alpha(int(200 * easeOutCubic(glowProgress)))
+    screen.blit(glow, glow.get_rect(center=(WIDTH // 2, titleY + 20)))
+    glow.set_alpha(255)
+
+    x = (WIDTH - totalWidth) // 2
+    for index, (char, surface) in enumerate(letters):
+        progress = clamp01((menuTimer - 6 - index * 3) / 20)
+        eased = easeOutBack(progress)
+        y = titleY + int((1 - eased) * 26)
+        alpha = int(255 * easeOutCubic(progress))
+        alpha -= alpha % 16
+        letter = renderTextAlphaCached(char, size, GOLD, alpha, True)
+        screen.blit(letter, (x, y))
+        x += surface.get_width() + 2
 
 
 
@@ -665,6 +775,12 @@ def prewarmAnimationCaches():
             height = max(8, int(20 * (1 - 0.16 * squash)))
             getPaddleSurface(width, height)
             getPaddleGlow(width, height)
+
+    # Panel overlay, glow judul, dan lencana menu
+    for panelSize in ((320, 210), (360, 250), (300, 230)):
+        getGlassPanel(*panelSize)
+    getTitleGlow(470, 96)
+    getBadgeSurface("NEW HIGH SCORE")
 
 
 precomputeShockwaves()
@@ -1305,8 +1421,17 @@ def populateBlocks(blockWidth, blockHeight,
     return listOfBlocks
 
 
-# Layar awal dengan judul game dan petunjuk mulai
+# Layar awal dengan judul beranimasi, bola demo, dan petunjuk mulai
 def startScreen(highScore):
+    menuTimer = 0
+    fade = 0.0
+
+    # Bola demo yang memantul otomatis di belakang menu
+    demoX, demoY = WIDTH // 2, 250
+    demoDX, demoDY = 2.4, 1.7
+    demoBall = getBallSurface(6, BALL_COLOR)
+    demoGlow = createGlowSurface(6, 1.0)
+
     while True:
         # Event handling
         for event in pygame.event.get():
@@ -1314,45 +1439,86 @@ def startScreen(highScore):
                 return False
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
+                    # Fade keluar sebelum masuk ke permainan
+                    fadeOutCurrent()
                     return True
                 # Tombol M untuk mute/unmute
                 if event.key == pygame.K_m:
                     toggleMute()
 
+        menuTimer += 1
+        fade = min(1.0, fade + 1.0 / FADE_FRAMES)
+
         updateStars()
         drawBackground(0)
 
-        titleText = renderTextCached("BLOCK BREAKER", 42, TEXT_SOFT, True)
-        titleRect = titleText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
-        screen.blit(titleText, titleRect)
+        # Balok dekoratif tipis di belakang judul
+        for blockX, blockY, blockColor in menuBlocks:
+            blockSurface = getBlockSurface(
+                blockColor, 0.5, BLOCK_W, BLOCK_H)
+            screen.blit(blockSurface, (blockX, blockY))
 
-        startText = renderTextCached("TEKAN SPACE UNTUK MULAI",
-                                     14, TEAL, True)
-        startRect = startText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
-        screen.blit(startText, startRect)
+        # Bola demo memantul di area menu
+        demoX += demoDX
+        demoY += demoDY
+        if demoX <= 24 or demoX >= WIDTH - 24:
+            demoDX *= -1
+        if demoY <= 68 or demoY >= 420:
+            demoDY *= -1
+        screen.blit(demoGlow, demoGlow.get_rect(
+            center=(int(demoX), int(demoY))))
+        screen.blit(demoBall, demoBall.get_rect(
+            center=(int(demoX), int(demoY))))
+
+        drawMenuTitle(menuTimer)
+
+        # Teks mulai berkedip halus dengan alpha sinus
+        blink = 150 + 105 * math.sin(menuTimer * 0.08)
+        alpha = int(blink)
+        alpha -= alpha % 16
+        startText = renderTextAlphaCached(
+            "TEKAN SPACE UNTUK MULAI", 14, TEAL, alpha, True)
+        screen.blit(startText, startText.get_rect(
+            center=(WIDTH // 2, 310)))
 
         # High score terakhir ditampilkan di layar awal
         highText = renderTextCached("HIGH SCORE  " + str(highScore),
                                     13, GOLD, True)
-        highRect = highText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 75))
-        screen.blit(highText, highRect)
+        screen.blit(highText, highText.get_rect(
+            center=(WIDTH // 2, 344)))
 
         # Petunjuk tombol mute beserta statusnya
         muteText = renderTextCached(
             "M  SUARA " + ("MATI" if muted else "NYALA"),
             11, TEXT_DIM, True)
-        muteRect = muteText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 105))
-        screen.blit(muteText, muteRect)
+        screen.blit(muteText, muteText.get_rect(
+            center=(WIDTH // 2, 376)))
 
+        # Fade masuk dari layar gelap
+        drawFadeOverlay(255 * (1 - fade))
         pygame.display.update()
         clock.tick(FPS)
 
 
+# Panel kaca bersama untuk pause, game over, dan level complete
+def drawOverlayPanel(width, height, centreY, ease):
+    panel = getGlassPanel(width, height)
+    panel.set_alpha(int(255 * ease))
+    offset = int((1 - ease) * 16)
+    rect = panel.get_rect(center=(WIDTH // 2, centreY + offset))
+    screen.blit(panel, rect)
+    panel.set_alpha(255)
+    return pygame.Rect(rect.x, rect.y + offset,
+                       rect.width, rect.height)
+
+
 # Once all the lives are over, this function waits until
 # exit or space bar is pressed and does the corresponding action
-def gameOver(score):
+def gameOver(score, highScore, newRecord):
     # Efek suara saat game over
     playSound("gameOver")
+
+    fade = 0.0
 
     while True:
         # Event handling
@@ -1362,41 +1528,67 @@ def gameOver(score):
             if event.type == pygame.KEYDOWN:
                 # SPACE untuk main lagi, ESC untuk keluar
                 if event.key == pygame.K_SPACE:
+                    fadeOutCurrent()
                     return True
                 if event.key == pygame.K_ESCAPE:
+                    fadeOutCurrent()
                     return False
                 # Tombol M untuk mute/unmute
                 if event.key == pygame.K_m:
                     toggleMute()
 
+        fade = min(1.0, fade + 1.0 / FADE_FRAMES)
+        ease = easeOutCubic(fade)
+
         updateStars()
         drawBackground(0)
 
-        overText = renderTextCached("GAME OVER", 38, ROSE_GOLD, True)
-        overRect = overText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
-        screen.blit(overText, overRect)
+        # Lapisan gelap di belakang panel
+        drawFadeOverlay(150 * ease)
+
+        panel = drawOverlayPanel(360, 250, HEIGHT // 2, ease)
+        top = panel.top
+        centreX = WIDTH // 2
+
+        overText = renderTextCached("GAME OVER", 32, ROSE_GOLD, True)
+        screen.blit(overText, overText.get_rect(center=(centreX, top + 36)))
 
         finalScoreLabel = renderTextCached("SKOR AKHIR", 11, TEXT_DIM, True)
         screen.blit(finalScoreLabel, finalScoreLabel.get_rect(
-            center=(WIDTH // 2, HEIGHT // 2 - 15)))
+            center=(centreX, top + 78)))
 
         finalScoreText = renderTextCached(str(score), 26, TEXT_SOFT, True)
-        finalScoreRect = finalScoreText.get_rect(
-            center=(WIDTH // 2, HEIGHT // 2 + 10))
-        screen.blit(finalScoreText, finalScoreRect)
+        screen.blit(finalScoreText, finalScoreText.get_rect(
+            center=(centreX, top + 104)))
+
+        bestLabel = renderTextCached("HIGH SCORE", 11, TEXT_DIM, True)
+        screen.blit(bestLabel, bestLabel.get_rect(
+            center=(centreX, top + 136)))
+
+        bestValue = renderTextCached(str(highScore), 20, GOLD, True)
+        screen.blit(bestValue, bestValue.get_rect(
+            center=(centreX, top + 158)))
+
+        if newRecord:
+            badge = getBadgeSurface("NEW HIGH SCORE")
+            screen.blit(badge, badge.get_rect(
+                center=(centreX, top + 188)))
 
         hintText = renderTextCached(
             "SPACE  MAIN LAGI      ESC  KELUAR", 12, TEXT_DIM, True)
-        hintRect = hintText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50))
-        screen.blit(hintText, hintRect)
+        screen.blit(hintText, hintText.get_rect(
+            center=(centreX, top + 221)))
 
+        drawFadeOverlay(255 * (1 - fade))
         pygame.display.update()
         # Batasi frame rate agar CPU tidak penuh saat layar game over
         clock.tick(FPS)
 
 
 # Layar saat semua balok habis (level selesai)
-def winScreen(score):
+def winScreen(levelScore, totalScore, highScore, newRecord):
+    fade = 0.0
+
     while True:
         # Event handling
         for event in pygame.event.get():
@@ -1404,35 +1596,59 @@ def winScreen(score):
                 return False
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
+                    fadeOutCurrent()
                     return True
                 if event.key == pygame.K_ESCAPE:
+                    fadeOutCurrent()
                     return False
                 # Tombol M untuk mute/unmute
                 if event.key == pygame.K_m:
                     toggleMute()
 
+        fade = min(1.0, fade + 1.0 / FADE_FRAMES)
+        ease = easeOutCubic(fade)
+
         updateStars()
         drawBackground(0)
 
-        winText = renderTextCached("YOU WIN", 38, TEAL, True)
-        winRect = winText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 70))
-        screen.blit(winText, winRect)
+        # Lapisan gelap tipis dan panel ringkasan level
+        drawFadeOverlay(140 * ease)
 
-        completeText = renderTextCached("LEVEL COMPLETE", 12, TEXT_DIM, True)
-        completeRect = completeText.get_rect(
-            center=(WIDTH // 2, HEIGHT // 2 - 25))
-        screen.blit(completeText, completeRect)
+        panel = drawOverlayPanel(300, 230, HEIGHT // 2, ease)
+        top = panel.top
+        centreX = WIDTH // 2
 
-        finalScoreText = renderTextCached(str(score), 26, TEXT_SOFT, True)
-        finalScoreRect = finalScoreText.get_rect(
-            center=(WIDTH // 2, HEIGHT // 2 + 10))
-        screen.blit(finalScoreText, finalScoreRect)
+        winText = renderTextCached("LEVEL COMPLETE", 24, TEAL, True)
+        screen.blit(winText, winText.get_rect(center=(centreX, top + 34)))
+
+        levelLabel = renderTextCached("SKOR LEVEL", 11, TEXT_DIM, True)
+        screen.blit(levelLabel, levelLabel.get_rect(
+            center=(centreX, top + 72)))
+
+        levelValue = renderTextCached("+" + str(levelScore),
+                                      24, TEXT_SOFT, True)
+        screen.blit(levelValue, levelValue.get_rect(
+            center=(centreX, top + 98)))
+
+        totalLabel = renderTextCached("TOTAL SKOR", 11, TEXT_DIM, True)
+        screen.blit(totalLabel, totalLabel.get_rect(
+            center=(centreX, top + 132)))
+
+        totalValue = renderTextCached(str(totalScore), 18, GOLD, True)
+        screen.blit(totalValue, totalValue.get_rect(
+            center=(centreX, top + 154)))
+
+        if newRecord:
+            badge = getBadgeSurface("NEW HIGH SCORE")
+            screen.blit(badge, badge.get_rect(
+                center=(centreX, top + 180)))
 
         hintText = renderTextCached(
-            "SPACE  LANJUT      ESC  KELUAR", 12, TEXT_DIM, True)
-        hintRect = hintText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50))
-        screen.blit(hintText, hintRect)
+            "SPACE  LANJUT      ESC  KELUAR", 11, TEXT_DIM, True)
+        screen.blit(hintText, hintText.get_rect(
+            center=(centreX, top + 207)))
 
+        drawFadeOverlay(255 * (1 - fade))
         pygame.display.update()
         clock.tick(FPS)
 
@@ -1482,6 +1698,12 @@ def main():
 
     # High score dibaca dari file saat game mulai
     highScore = loadHighScore()
+    highScoreAtStart = highScore
+    levelStartScore = 0
+
+    # Fade masuk permainan dan fade overlay pause
+    gameFade = 0.0
+    pauseFade = 0.0
 
     striker = Striker(0, STRIKER_Y, PADDLE_WIDTH, 20, 5, WHITE)
     strikerXFac = 0
@@ -1531,12 +1753,17 @@ def main():
 
         # Semua balok habis: tampilkan layar Level Complete
         if not listOfBlocks and not paused:
-            if winScreen(score):
+            levelScore = score - levelStartScore
+            newRecord = score > highScoreAtStart and score > 0
+            fadeOutCurrent()
+            if winScreen(levelScore, score, highScore, newRecord):
                 # Lanjut ke level berikutnya
                 bgPrevAccent = bgAccent
                 level += 1
                 bgAccent = (level - 1) % len(LEVEL_ACCENTS)
                 bgFade = 0.0
+                levelStartScore = score
+                gameFade = 0.0
                 # Kecepatan bola naik sedikit, dibatasi maksimal
                 ball.speedUp(SPEED_INCREMENT, MAX_BALL_SPEED)
                 listOfBlocks = populateBlocks(
@@ -1560,10 +1787,12 @@ def main():
         # All the lives are over. So, the gameOver() function is called
         if lives <= 0:
             # Perbarui dan simpan high score sebelum layar game over
+            newRecord = score > highScoreAtStart and score > 0
             highScore = max(highScore, score)
             saveHighScore(highScore)
 
-            running = gameOver(score)
+            fadeOutCurrent()
+            running = gameOver(score, highScore, newRecord)
 
             # Keluar jika pemain memilih ESC
             if not running:
@@ -1575,10 +1804,14 @@ def main():
             lives = 3
             score = 0
             level = 1
+            highScoreAtStart = highScore
+            levelStartScore = 0
+            gameFade = 0.0
             bgAccent = 0
             bgPrevAccent = 0
             bgFade = 1.0
             paused = False
+            pauseFade = 0.0
             # Kembalikan kecepatan bola ke kecepatan awal
             ball.resetSpeed(BALL_SPEED)
             # Bersihkan semua efek dan power-up yang tersisa
@@ -1860,18 +2093,44 @@ def main():
             screen.blit(muteText, muteText.get_rect(
                 midright=(WIDTH - HUD_MARGIN, HEIGHT - 15)))
 
-        # Tulisan PAUSED saat permainan dijeda
+        # Overlay pause dengan panel kaca (fade masuk/keluar halus)
         if paused:
-            pausedText = renderTextCached("PAUSED", 34, TEXT_SOFT, True)
-            pausedRect = pausedText.get_rect(
-                center=(WIDTH // 2, HEIGHT // 2))
-            screen.blit(pausedText, pausedRect)
+            pauseFade = min(1.0, pauseFade + 1.0 / FADE_FRAMES)
+        else:
+            pauseFade = max(0.0, pauseFade - 1.0 / FADE_FRAMES)
+
+        if pauseFade > 0:
+            pauseEase = easeOutCubic(pauseFade)
+            drawFadeOverlay(150 * pauseEase)
+
+            panel = drawOverlayPanel(320, 210, HEIGHT // 2, pauseEase)
+            top = panel.top
+            centreX = WIDTH // 2
+
+            pausedText = renderTextCached("PAUSED", 28, TEXT_SOFT, True)
+            screen.blit(pausedText, pausedText.get_rect(
+                center=(centreX, top + 34)))
+
+            scoreLabel = renderTextCached("SKOR", 11, TEXT_DIM, True)
+            screen.blit(scoreLabel, scoreLabel.get_rect(
+                center=(centreX, top + 74)))
+            scoreValue = renderTextCached(str(int(round(displayScore))),
+                                          20, TEXT_SOFT, True)
+            screen.blit(scoreValue, scoreValue.get_rect(
+                center=(centreX, top + 96)))
+
+            bestLabel = renderTextCached("HIGH SCORE", 11, TEXT_DIM, True)
+            screen.blit(bestLabel, bestLabel.get_rect(
+                center=(centreX, top + 128)))
+            bestValue = renderTextCached(str(highScore), 18, GOLD, True)
+            screen.blit(bestValue, bestValue.get_rect(
+                center=(centreX, top + 148)))
 
             pauseHint = renderTextCached(
-                "TEKAN P UNTUK MELANJUTKAN", 12, TEXT_DIM, True)
-            pauseHintRect = pauseHint.get_rect(
-                center=(WIDTH // 2, HEIGHT // 2 + 40))
-            screen.blit(pauseHint, pauseHintRect)
+                "P  LANJUTKAN        M  SUARA", 11, TEXT_DIM, True)
+            screen.blit(pauseHint, pauseHint.get_rect(
+                center=(centreX, top + 184)))
+
 
         # Efek screen shake dengan amplitudo yang meluruh halus
         if shakeTimer > 0:
