@@ -258,19 +258,31 @@ def gameOver():
                     return True
 
 
+# Menggambar ikon hati kecil untuk HUD nyawa
+def drawHeart(cx, cy, size, color):
+    radius = size // 2
+
+    # Dua lingkaran sebagai lengkung atas hati
+    pygame.draw.circle(screen, color,
+                       (cx - radius // 2, cy - radius // 2),
+                       radius // 2 + 1)
+    pygame.draw.circle(screen, color,
+                       (cx + radius // 2, cy - radius // 2),
+                       radius // 2 + 1)
+
+    # Segitiga sebagai ujung bawah hati
+    pygame.draw.polygon(screen, color, [
+        (cx - radius, cy - radius // 3),
+        (cx + radius, cy - radius // 3),
+        (cx, cy + radius)])
+
+
 # Game Manager
 def main():
     running = True
     lives = 3
     score = 0
-
-    scoreText = font.render("score", True, WHITE)
-    scoreTextRect = scoreText.get_rect()
-    scoreTextRect.center = (20, HEIGHT-10)
-
-    livesText = font.render("Lives", True, WHITE)
-    livesTextRect = livesText.get_rect()
-    livesTextRect.center = (120, HEIGHT-10)
+    level = 1
 
     striker = Striker(0, HEIGHT-50, 100, 20, 10, WHITE)
     strikerXFac = 0
@@ -286,11 +298,6 @@ def main():
     # Game loop
     while running:
         screen.fill(BLACK)
-        screen.blit(scoreText, scoreTextRect)
-        screen.blit(livesText, livesTextRect)
-
-        scoreText = font.render("Score : " + str(score), True, WHITE)
-        livesText = font.render("Lives : " + str(lives), True, WHITE)
 
         # If all the blocks are destroyed, then we repopulate them
         if not listOfBlocks:
@@ -358,6 +365,24 @@ def main():
 
         for block in listOfBlocks:
             block.display()
+
+        # HUD dirender setelah state terbaru dihitung, lalu langsung
+        # digambar di frame yang sama agar tidak tertinggal satu frame
+        # Skor di kiri bawah
+        scoreText = font.render("Score : " + str(score), True, WHITE)
+        scoreTextRect = scoreText.get_rect()
+        scoreTextRect.bottomleft = (10, HEIGHT - 6)
+        screen.blit(scoreText, scoreTextRect)
+
+        # Level di tengah bawah
+        levelText = font.render("Level : " + str(level), True, WHITE)
+        levelTextRect = levelText.get_rect()
+        levelTextRect.midbottom = (WIDTH // 2, HEIGHT - 6)
+        screen.blit(levelText, levelTextRect)
+
+        # Nyawa sebagai ikon hati di kanan bawah (berjajar dari kanan)
+        for i in range(lives):
+            drawHeart(WIDTH - 18 - i * 20, HEIGHT - 18, 14, RED)
 
         pygame.display.update()
         clock.tick(FPS)
