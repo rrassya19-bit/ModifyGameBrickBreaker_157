@@ -1,7 +1,18 @@
+import array
+import math
+import os
 import pygame
 import random
 
+# Mixer mono dipersiapkan sebelum pygame.init agar buffer nada sederhana
+# terbaca dengan benar
+pygame.mixer.pre_init(44100, -16, 1, 512)
 pygame.init()
+
+# Status audio: jika mixer gagal, permainan tetap berjalan tanpa suara
+audioAvailable = pygame.mixer.get_init() is not None
+muted = False
+soundEffects = {}
 
 # Dimensions of the screen
 WIDTH, HEIGHT = 600, 500
@@ -75,6 +86,10 @@ SHAKE_TIME = 12
 SHAKE_STRENGTH = 4
 STRIKER_FLASH_TIME = 6
 FLOATING_TEXT_LIFE = 30
+
+# Lokasi file high score (di folder yang sama dengan file program)
+HIGHSCORE_FILE = os.path.join(
+    os.path.dirname(os.path.abspath(__file__)), "highscore.txt")
 
 # Cache permukaan balok agar gradasi tidak dibuat ulang tiap frame
 blockSurfaceCache = {}
@@ -155,6 +170,77 @@ def createGlowSurface(radius):
 
 # Background gradasi dibuat sekali, lalu di-blit tiap frame
 backgroundSurface = createGradientSurface(DARK_BLUE, DARK_PURPLE, HEIGHT)
+
+
+# Membuat nada sederhana (gelombang sinus) tanpa file eksternal
+def createToneSound(frequency, duration, volume=0.3):
+    sampleRate = 44100
+    totalSamples = int(sampleRate * duration)
+    samples = array.array('h')
+
+    for i in range(totalSamples):
+        # Envelope menurun agar suara tidak berhenti mendadak
+        envelope = 1 - i / totalSamples
+        value = int(32767 * volume * envelope *
+                    math.sin(2 * math.pi * frequency * i / sampleRate))
+        samples.append(value)
+
+    return pygame.mixer.Sound(buffer=samples.tobytes())
+
+
+# Menyiapkan semua efek suara; gagal sedikitpun tetap aman
+def createSoundEffects():
+    if not audioAvailable:
+        return
+
+    try:
+        soundEffects["bounce"] = createToneSound(440, 0.06, 0.25)
+        soundEffects["break"] = createToneSound(700, 0.10, 0.30)
+        soundEffects["powerup"] = createToneSound(880, 0.15, 0.30)
+        soundEffects["lifeLost"] = createToneSound(220, 0.30, 0.30)
+        soundEffects["gameOver"] = createToneSound(140, 0.60, 0.30)
+    except Exception:
+        # Audio tidak boleh menghentikan permainan
+        soundEffects.clear()
+
+
+# Memainkan efek suara jika tidak di-mute dan tersedia
+def playSound(name):
+    if muted or name not in soundEffects:
+        return
+
+    try:
+        soundEffects[name].play()
+    except pygame.error:
+        # Abaikan jika perangkat audio bermasalah
+        pass
+
+
+# Mengubah status mute/unmute
+def toggleMute():
+    global muted
+    muted = not muted
+
+
+# Membaca high score dari file, aman jika file belum ada/rusak
+def loadHighScore():
+    try:
+        with open(HIGHSCORE_FILE, "r") as file:
+            return int(file.read().strip())
+    except (FileNotFoundError, ValueError, OSError):
+        return 0
+
+
+# Menyimpan high score ke file
+def saveHighScore(score):
+    try:
+        with open(HIGHSCORE_FILE, "w") as file:
+            file.write(str(score))
+    except OSError:
+        pass
+
+
+createSoundEffects()
 
 
 # Striker class
@@ -341,10 +427,12 @@ class Ball:
         # either of the vertical edges
         if self.posx <= 0 or self.posx >= WIDTH:
             self.xFac *= -1
+            playSound("bounce")
 
         # Reflection from the top most edge of the screen
         if self.posy <= 0:
             self.yFac *= -1
+            playSound("bounce")
 
         # If the ball touches the bottom most edge of 
         # the screen, True value is returned
@@ -586,7 +674,7 @@ def populateBlocks(blockWidth, blockHeight,
 
 
 # Layar awal dengan judul game dan petunjuk mulai
-def startScreen():
+def startScreen(highScore):
     while True:
         # Event handling
         for event in pygame.event.get():
@@ -595,6 +683,9 @@ def startScreen():
             if event.type == pygame.KEYDOWN:
                 if event.key == pygame.K_SPACE:
                     return True
+                # Tombol M untuk mute/unmute
+                if event.key == pygame.K_m:
+                    toggleMute()
 
         screen.blit(backgroundSurface, (0, 0))
 
@@ -606,6 +697,18 @@ def startScreen():
         startRect = startText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
         screen.blit(startText, startRect)
 
+        # High score terakhir ditampilkan di layar awal
+        highText = font.render("High Score : " + str(highScore),
+                               True, YELLOW)
+        highRect = highText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 75))
+        screen.blit(highText, highRect)
+
+        # Petunjuk tombol mute beserta statusnya
+        muteText = font.render(
+            "M : Suara " + ("Mati" if muted else "Nyala"), True, WHITE)
+        muteRect = muteText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 105))
+        screen.blit(muteText, muteRect)
+
         pygame.display.update()
         clock.tick(FPS)
 
@@ -613,6 +716,9 @@ def startScreen():
 # Once all the lives are over, this function waits until
 # exit or space bar is pressed and does the corresponding action
 def gameOver(score):
+    # Efek suara saat game over
+    playSound("gameOver")
+
     while True:
         # Event handling
         for event in pygame.event.get():
@@ -624,6 +730,9 @@ def gameOver(score):
                     return True
                 if event.key == pygame.K_ESCAPE:
                     return False
+                # Tombol M untuk mute/unmute
+                if event.key == pygame.K_m:
+                    toggleMute()
 
         screen.blit(backgroundSurface, (0, 0))
 
@@ -659,6 +768,9 @@ def winScreen(score):
                     return True
                 if event.key == pygame.K_ESCAPE:
                     return False
+                # Tombol M untuk mute/unmute
+                if event.key == pygame.K_m:
+                    toggleMute()
 
         screen.blit(backgroundSurface, (0, 0))
 
@@ -712,6 +824,9 @@ def main():
     score = 0
     level = 1
 
+    # High score dibaca dari file saat game mulai
+    highScore = loadHighScore()
+
     striker = Striker(0, HEIGHT-50, PADDLE_WIDTH, 20, 10, WHITE)
     strikerXFac = 0
 
@@ -734,7 +849,7 @@ def main():
     shakeTimer = 0
 
     # Tampilkan layar awal sebelum permainan dimulai
-    if not startScreen():
+    if not startScreen(highScore):
         return
 
     # Bola mulai dari atas striker saat permainan dimulai
@@ -766,6 +881,10 @@ def main():
 
         # All the lives are over. So, the gameOver() function is called
         if lives <= 0:
+            # Perbarui dan simpan high score sebelum layar game over
+            highScore = max(highScore, score)
+            saveHighScore(highScore)
+
             running = gameOver(score)
 
             # Keluar jika pemain memilih ESC
@@ -802,6 +921,9 @@ def main():
                 # Tombol P menjeda dan melanjutkan permainan
                 if event.key == pygame.K_p:
                     paused = not paused
+                # Tombol M untuk mute/unmute
+                if event.key == pygame.K_m:
+                    toggleMute()
 
         # Game hanya diperbarui jika tidak sedang dijeda
         if not paused:
@@ -824,6 +946,7 @@ def main():
                 strikerBounce(ball, striker.getRect())
                 # Kilau singkat pada striker saat bola memantul
                 strikerFlashTimer = STRIKER_FLASH_TIME
+                playSound("bounce")
 
             # Iterasi salinan list agar aman saat balok dihapus,
             # dan hanya satu balok diproses per frame
@@ -838,6 +961,11 @@ def main():
                         # Skor berbeda sesuai jenis balok
                         points = block.getScore()
                         score += points
+                        # Perbarui high score berjalan
+                        if score > highScore:
+                            highScore = score
+                        # Suara balok hancur
+                        playSound("break")
 
                         # Partikel kecil sesuai warna balok
                         particleColor = blockColors(
@@ -872,6 +1000,8 @@ def main():
                 ball.reset(striker)
                 # Screen shake ringan saat nyawa berkurang
                 shakeTimer = SHAKE_TIME
+                # Suara nyawa hilang
+                playSound("lifeLost")
 
             # Update power-up: jatuh, diambil striker, atau hilang
             for powerUp in powerUps[:]:
@@ -890,6 +1020,8 @@ def main():
                     else:
                         lives = min(lives + 1, MAX_LIVES)
                     powerUps.remove(powerUp)
+                    # Suara mengambil power-up
+                    playSound("powerup")
 
             # Timer efek sementara (hanya berjalan saat tidak dijeda)
             if paddleTimer > 0:
@@ -971,6 +1103,15 @@ def main():
             pygame.draw.rect(screen, BLACK, statusRect.inflate(8, 4))
             screen.blit(statusText, statusRect)
 
+        # High score di kanan atas HUD (plus indikator mute)
+        highLabel = "High : " + str(highScore)
+        if muted:
+            highLabel += "  (Mute)"
+        highText = font.render(highLabel, True, YELLOW)
+        highRect = highText.get_rect(topright=(WIDTH - 8, 6))
+        pygame.draw.rect(screen, BLACK, highRect.inflate(8, 4))
+        screen.blit(highText, highRect)
+
         # Tulisan PAUSED saat permainan dijeda
         if paused:
             pausedText = titleFont.render("PAUSED", True, WHITE)
@@ -994,6 +1135,9 @@ def main():
 
         pygame.display.update()
         clock.tick(FPS)
+
+    # Simpan high score terakhir saat keluar dari game
+    saveHighScore(max(highScore, score))
 
 
 if __name__ == "__main__":
