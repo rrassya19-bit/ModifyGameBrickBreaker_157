@@ -17,47 +17,112 @@ soundEffects = {}
 # Dimensions of the screen
 WIDTH, HEIGHT = 600, 500
 
-# Colors
+# Palet "Midnight Elegant"
+NAVY = (11, 16, 32)
+INDIGO = (26, 27, 58)
+TEAL = (79, 179, 191)
+VIOLET = (139, 127, 214)
+ROSE_GOLD = (224, 160, 139)
+GOLD = (242, 200, 121)
+TEXT_SOFT = (232, 236, 245)
+TEXT_DIM = (138, 146, 168)
+
+# Warna lama dipertahankan sebagai alias agar logika tetap sama
 BLACK = (0, 0, 0)
-WHITE = (255, 255, 255)
-GREEN = (0, 255, 0)
-RED = (255, 0, 0)
-BLUE = (0, 120, 255)
-YELLOW = (255, 255, 0)
-ORANGE = (255, 140, 0)
+WHITE = TEXT_SOFT
+GREEN = TEAL
+RED = ROSE_GOLD
+BLUE = TEAL
+YELLOW = GOLD
+ORANGE = ROSE_GOLD
 
 # Tema warna tampilan
-DARK_BLUE = (14, 20, 55)
-DARK_PURPLE = (52, 16, 78)
-BLOCK_DARK = (25, 28, 45)
-BLOCK_BORDER = (12, 14, 26)
-BLOCK_GREEN_TOP = (120, 255, 150)
-BLOCK_GREEN_BOTTOM = (20, 160, 70)
-BLOCK_WHITE_TOP = (245, 248, 255)
-BLOCK_WHITE_BOTTOM = (175, 190, 215)
-BLOCK_RED_TOP = (255, 140, 140)
-BLOCK_RED_BOTTOM = (180, 25, 45)
-STRIKER_COLOR = (60, 170, 255)
-STRIKER_HIGHLIGHT = (170, 220, 255)
-STRIKER_BORDER = (220, 240, 255)
-BALL_GLOW = (90, 200, 255)
-BALL_TRAIL = (140, 210, 255)
+DARK_BLUE = NAVY
+DARK_PURPLE = INDIGO
+BLOCK_DARK = (20, 22, 44)
+BLOCK_BORDER = (48, 52, 82)
+BLOCK_GREEN_TOP = (120, 215, 214)
+BLOCK_GREEN_BOTTOM = (43, 130, 142)
+BLOCK_WHITE_TOP = (176, 164, 236)
+BLOCK_WHITE_BOTTOM = (104, 92, 170)
+BLOCK_RED_TOP = (243, 190, 168)
+BLOCK_RED_BOTTOM = (176, 108, 92)
+BLOCK_TEAL_TOP = BLOCK_GREEN_TOP
+BLOCK_TEAL_BOTTOM = BLOCK_GREEN_BOTTOM
+BLOCK_VIOLET_TOP = BLOCK_WHITE_TOP
+BLOCK_VIOLET_BOTTOM = BLOCK_WHITE_BOTTOM
+BLOCK_ROSE_TOP = BLOCK_RED_TOP
+BLOCK_ROSE_BOTTOM = BLOCK_RED_BOTTOM
+STRIKER_COLOR = (74, 120, 160)
+STRIKER_HIGHLIGHT = (190, 225, 235)
+STRIKER_BORDER = (120, 200, 215)
+BALL_GLOW = (120, 205, 215)
+BALL_TRAIL = (150, 200, 220)
+BALL_COLOR = (240, 246, 252)
 
-font = pygame.font.Font('freesansbold.ttf', 15)
+# Tata letak "Midnight Elegant"
+HUD_TOP_H = 54
+HUD_MARGIN = 32
+GRID_COLUMNS = 10
+GRID_ROWS = 8
+GRID_TOP = 80
+BLOCK_W, BLOCK_H = 40, 15
+BLOCK_GAP_X, BLOCK_GAP_Y = 15, 14
+STRIKER_Y = HEIGHT - 50
+HEART_SIZE = 16
+HEART_COLOR = ROSE_GOLD
 
-# Font lebih besar untuk judul dan layar status
-titleFont = pygame.font.Font('freesansbold.ttf', 40)
+# Cache font dan teks agar tidak ada Surface baru tiap frame
+fontCache = {}
+textCache = {}
 
 screen = pygame.display.set_mode((WIDTH, HEIGHT))
 pygame.display.set_caption("Block Breaker")
 
+
+# Memuat font sistem dengan fallback dan cache
+def loadFont(size, bold=False):
+    key = (size, bold)
+    if key not in fontCache:
+        fontCache[key] = pygame.font.SysFont(
+            ["Montserrat", "Poppins", "Helvetica Neue",
+             "Segoe UI", "Arial"], size, bold=bold)
+    return fontCache[key]
+
+
+# Teks yang sudah dirender dan di-cache
+def renderTextCached(text, size, color, bold=False):
+    key = (text, size, color, bold, 255)
+    if key not in textCache:
+        textCache[key] = loadFont(size, bold).render(
+            text, True, color).convert_alpha()
+    return textCache[key]
+
+
+# Teks dengan alpha tertentu (untuk animasi fade)
+def renderTextAlphaCached(text, size, color, alpha, bold=False):
+    alpha = max(0, min(255, int(alpha)))
+    key = (text, size, color, bold, alpha)
+    if key not in textCache:
+        surface = loadFont(size, bold).render(
+            text, True, color).convert_alpha()
+        surface.set_alpha(alpha)
+        textCache[key] = surface
+    return textCache[key]
+
+
+# Alias font lama diganti dengan sistem font baru
+font = loadFont(15)
+titleFont = loadFont(42, True)
+
 # to control the frame rate
 clock = pygame.time.Clock()
-FPS = 30
+FPS = 60
 
 # Kecepatan awal bola dan batas maksimal kecepatannya
-BALL_SPEED = 5
-MAX_BALL_SPEED = 9
+BALL_SPEED = 2.5
+MAX_BALL_SPEED = 4.5
+SPEED_INCREMENT = 0.25
 
 # Pengaturan power-up
 POWERUP_CHANCE = 0.2
@@ -66,20 +131,21 @@ PADDLE_WIDTH = 100
 WIDE_PADDLE_WIDTH = 160
 SLOW_FACTOR = 0.6
 MAX_LIVES = 5
+POWERUP_SPEED = 1.5
 
 # Jenis power-up dan warnanya
 POWERUP_PADDLE = "paddle"
 POWERUP_SLOW = "slow"
 POWERUP_LIFE = "life"
 POWERUP_COLORS = {
-    POWERUP_PADDLE: BLUE,
-    POWERUP_SLOW: YELLOW,
-    POWERUP_LIFE: ORANGE
+    POWERUP_PADDLE: TEAL,
+    POWERUP_SLOW: VIOLET,
+    POWERUP_LIFE: ROSE_GOLD
 }
 
 # Pengaturan tampilan
-BLOCK_RADIUS = 4
-BALL_TRAIL_LENGTH = 8
+BLOCK_RADIUS = 5
+BALL_TRAIL_LENGTH = 12
 PARTICLE_COUNT = 12
 PARTICLE_LIFE = 22
 SHAKE_TIME = 12
@@ -93,6 +159,9 @@ HIGHSCORE_FILE = os.path.join(
 
 # Cache permukaan balok agar gradasi tidak dibuat ulang tiap frame
 blockSurfaceCache = {}
+
+# Cache ikon hati anti-aliased
+heartCache = {}
 
 
 # Mencampur dua warna (t = 0..1)
@@ -496,7 +565,7 @@ class PowerUp:
     def __init__(self, posx, posy, kind):
         self.posx, self.posy = posx, posy
         self.width, self.height = 26, 12
-        self.speed = 3
+        self.speed = POWERUP_SPEED
         self.kind = kind
         self.color = POWERUP_COLORS[kind]
 
@@ -569,8 +638,9 @@ class FloatingText:
         return self.life <= 0
 
     def display(self):
-        surface = font.render(self.text, True, YELLOW)
-        surface.set_alpha(int(255 * self.life / self.maxLife))
+        alpha = int(255 * self.life / self.maxLife)
+        surface = renderTextAlphaCached(
+            self.text, 15, GOLD, alpha, True)
         screen.blit(surface, surface.get_rect(
             center=(int(self.posx), int(self.posy))))
 
@@ -637,13 +707,18 @@ def strikerBounce(ball, strikerRect):
 
 
 # Function used to populate the blocks
-# Pola balok berganti tiap level dan berulang setelah 3 pola
+# Grid balok simetris di tengah area bermain, pola berganti tiap level
 def populateBlocks(blockWidth, blockHeight, 
                    horizontalGap, verticalGap, level):
     listOfBlocks = []
 
-    columnCount = len(range(0, WIDTH, blockWidth+horizontalGap))
-    rowCount = len(range(0, HEIGHT//2, blockHeight+verticalGap))
+    columnCount = GRID_COLUMNS
+    rowCount = GRID_ROWS
+
+    # Grid dibuat simetris (margin kiri = margin kanan)
+    gridWidth = (columnCount * blockWidth +
+                 (columnCount - 1) * horizontalGap)
+    left = (WIDTH - gridWidth) // 2
 
     # 0 = penuh, 1 = selang-seling, 2 = piramida
     pattern = (level - 1) % 3
@@ -662,10 +737,10 @@ def populateBlocks(blockWidth, blockHeight,
                 if column < center - row or column > center + row:
                     continue
 
-            posx = column * (blockWidth+horizontalGap)
-            posy = row * (blockHeight+verticalGap)
+            posx = left + column * (blockWidth+horizontalGap)
+            posy = GRID_TOP + row * (blockHeight+verticalGap)
 
-            # Jenis balok acak: hijau (1x), putih (2x), merah (3x)
+            # Jenis balok acak: teal (1x), violet (2x), rose (3x)
             listOfBlocks.append(
                 Block(posx, posy, blockWidth, blockHeight, 
                       random.choice([WHITE, GREEN, RED])))
@@ -689,23 +764,25 @@ def startScreen(highScore):
 
         screen.blit(backgroundSurface, (0, 0))
 
-        titleText = titleFont.render("BLOCK BREAKER", True, WHITE)
+        titleText = renderTextCached("BLOCK BREAKER", 42, TEXT_SOFT, True)
         titleRect = titleText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
         screen.blit(titleText, titleRect)
 
-        startText = font.render("Tekan SPACE untuk mulai", True, GREEN)
+        startText = renderTextCached("TEKAN SPACE UNTUK MULAI",
+                                     14, TEAL, True)
         startRect = startText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
         screen.blit(startText, startRect)
 
         # High score terakhir ditampilkan di layar awal
-        highText = font.render("High Score : " + str(highScore),
-                               True, YELLOW)
+        highText = renderTextCached("HIGH SCORE  " + str(highScore),
+                                    13, GOLD, True)
         highRect = highText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 75))
         screen.blit(highText, highRect)
 
         # Petunjuk tombol mute beserta statusnya
-        muteText = font.render(
-            "M : Suara " + ("Mati" if muted else "Nyala"), True, WHITE)
+        muteText = renderTextCached(
+            "M  SUARA " + ("MATI" if muted else "NYALA"),
+            11, TEXT_DIM, True)
         muteRect = muteText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 105))
         screen.blit(muteText, muteRect)
 
@@ -736,19 +813,22 @@ def gameOver(score):
 
         screen.blit(backgroundSurface, (0, 0))
 
-        overText = titleFont.render("GAME OVER", True, RED)
+        overText = renderTextCached("GAME OVER", 38, ROSE_GOLD, True)
         overRect = overText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 60))
         screen.blit(overText, overRect)
 
-        finalScoreText = font.render(
-            "Skor akhir : " + str(score), True, WHITE)
+        finalScoreLabel = renderTextCached("SKOR AKHIR", 11, TEXT_DIM, True)
+        screen.blit(finalScoreLabel, finalScoreLabel.get_rect(
+            center=(WIDTH // 2, HEIGHT // 2 - 15)))
+
+        finalScoreText = renderTextCached(str(score), 26, TEXT_SOFT, True)
         finalScoreRect = finalScoreText.get_rect(
-            center=(WIDTH // 2, HEIGHT // 2 - 10))
+            center=(WIDTH // 2, HEIGHT // 2 + 10))
         screen.blit(finalScoreText, finalScoreRect)
 
-        hintText = font.render(
-            "Tekan SPACE untuk main lagi / ESC untuk keluar", True, WHITE)
-        hintRect = hintText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 40))
+        hintText = renderTextCached(
+            "SPACE  MAIN LAGI      ESC  KELUAR", 12, TEXT_DIM, True)
+        hintRect = hintText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50))
         screen.blit(hintText, hintRect)
 
         pygame.display.update()
@@ -774,23 +854,22 @@ def winScreen(score):
 
         screen.blit(backgroundSurface, (0, 0))
 
-        winText = titleFont.render("YOU WIN", True, GREEN)
+        winText = renderTextCached("YOU WIN", 38, TEAL, True)
         winRect = winText.get_rect(center=(WIDTH // 2, HEIGHT // 2 - 70))
         screen.blit(winText, winRect)
 
-        completeText = font.render("Level Complete", True, WHITE)
+        completeText = renderTextCached("LEVEL COMPLETE", 12, TEXT_DIM, True)
         completeRect = completeText.get_rect(
             center=(WIDTH // 2, HEIGHT // 2 - 25))
         screen.blit(completeText, completeRect)
 
-        finalScoreText = font.render(
-            "Skor : " + str(score), True, WHITE)
+        finalScoreText = renderTextCached(str(score), 26, TEXT_SOFT, True)
         finalScoreRect = finalScoreText.get_rect(
             center=(WIDTH // 2, HEIGHT // 2 + 10))
         screen.blit(finalScoreText, finalScoreRect)
 
-        hintText = font.render(
-            "Tekan SPACE untuk lanjut / ESC untuk keluar", True, WHITE)
+        hintText = renderTextCached(
+            "SPACE  LANJUT      ESC  KELUAR", 12, TEXT_DIM, True)
         hintRect = hintText.get_rect(center=(WIDTH // 2, HEIGHT // 2 + 50))
         screen.blit(hintText, hintRect)
 
@@ -798,23 +877,35 @@ def winScreen(score):
         clock.tick(FPS)
 
 
-# Menggambar ikon hati kecil untuk HUD nyawa
+# Menggambar ikon hati vektor yang halus (anti-aliased, di-cache)
+def getHeartSurface(size, color):
+    key = (size, color)
+    if key not in heartCache:
+        scale = 4
+        boxW = boxH = size * scale
+        surface = pygame.Surface((boxW, boxH), pygame.SRCALPHA)
+
+        radius = boxW // 4
+        lobeY = int(boxH * 0.34)
+        leftX = int(boxW // 2 - radius * 0.55)
+        rightX = int(boxW // 2 + radius * 0.55)
+
+        # Dua lengkung atas dan ujung bawah hati
+        pygame.draw.circle(surface, color, (leftX, lobeY), radius)
+        pygame.draw.circle(surface, color, (rightX, lobeY), radius)
+        pygame.draw.polygon(surface, color, [
+            (int(boxW // 2 - radius * 1.55), int(boxH * 0.36)),
+            (int(boxW // 2 + radius * 1.55), int(boxH * 0.36)),
+            (int(boxW // 2), int(boxH * 0.92))])
+
+        heartCache[key] = pygame.transform.smoothscale(
+            surface, (size, size)).convert_alpha()
+    return heartCache[key]
+
+
 def drawHeart(cx, cy, size, color):
-    radius = size // 2
-
-    # Dua lingkaran sebagai lengkung atas hati
-    pygame.draw.circle(screen, color,
-                       (cx - radius // 2, cy - radius // 2),
-                       radius // 2 + 1)
-    pygame.draw.circle(screen, color,
-                       (cx + radius // 2, cy - radius // 2),
-                       radius // 2 + 1)
-
-    # Segitiga sebagai ujung bawah hati
-    pygame.draw.polygon(screen, color, [
-        (cx - radius, cy - radius // 3),
-        (cx + radius, cy - radius // 3),
-        (cx, cy + radius)])
+    heart = getHeartSurface(size, color)
+    screen.blit(heart, heart.get_rect(center=(cx, cy)))
 
 
 # Game Manager
@@ -827,13 +918,13 @@ def main():
     # High score dibaca dari file saat game mulai
     highScore = loadHighScore()
 
-    striker = Striker(0, HEIGHT-50, PADDLE_WIDTH, 20, 10, WHITE)
+    striker = Striker(0, STRIKER_Y, PADDLE_WIDTH, 20, 5, WHITE)
     strikerXFac = 0
 
-    ball = Ball(0, HEIGHT-150, 7, BALL_SPEED, WHITE)
+    ball = Ball(WIDTH // 2, STRIKER_Y - 60, 7, BALL_SPEED, BALL_COLOR)
 
-    blockWidth, blockHeight = 40, 15
-    horizontalGap, verticalGap = 20, 20
+    blockWidth, blockHeight = BLOCK_W, BLOCK_H
+    horizontalGap, verticalGap = BLOCK_GAP_X, BLOCK_GAP_Y
 
     listOfBlocks = populateBlocks(
         blockWidth, blockHeight, horizontalGap, verticalGap, level)
@@ -866,7 +957,7 @@ def main():
                 # Lanjut ke level berikutnya
                 level += 1
                 # Kecepatan bola naik sedikit, dibatasi maksimal
-                ball.speedUp(0.5, MAX_BALL_SPEED)
+                ball.speedUp(SPEED_INCREMENT, MAX_BALL_SPEED)
                 listOfBlocks = populateBlocks(
                     blockWidth, blockHeight, horizontalGap, verticalGap,
                     level)
@@ -1068,59 +1159,65 @@ def main():
         for floatingText in floatingTexts:
             floatingText.display()
 
-        # HUD dirender setelah state terbaru dihitung, lalu langsung
-        # digambar di frame yang sama agar tidak tertinggal satu frame
-        # Skor di kiri bawah
-        scoreText = font.render("Score : " + str(score), True, WHITE)
-        scoreTextRect = scoreText.get_rect()
-        scoreTextRect.bottomleft = (10, HEIGHT - 6)
-        screen.blit(scoreText, scoreTextRect)
+        # Top bar tipis: Score (kiri), Level (tengah), High Score (kanan)
+        pygame.draw.line(screen, (58, 64, 94),
+                         (HUD_MARGIN, HUD_TOP_H),
+                         (WIDTH - HUD_MARGIN, HUD_TOP_H), 1)
 
-        # Level di tengah bawah
-        levelText = font.render("Level : " + str(level), True, WHITE)
-        levelTextRect = levelText.get_rect()
-        levelTextRect.midbottom = (WIDTH // 2, HEIGHT - 6)
-        screen.blit(levelText, levelTextRect)
+        scoreLabel = renderTextCached("SCORE", 11, TEXT_DIM, True)
+        scoreValue = renderTextCached(str(score), 19, TEXT_SOFT, True)
+        screen.blit(scoreLabel, (HUD_MARGIN, 11))
+        screen.blit(scoreValue, (HUD_MARGIN - 1, 26))
 
-        # Nyawa sebagai ikon hati di kanan bawah (berjajar dari kanan)
+        levelLabel = renderTextCached("LEVEL", 11, TEXT_DIM, True)
+        levelValue = renderTextCached("%02d" % level,
+                                      16, TEXT_SOFT, True)
+        screen.blit(levelLabel, levelLabel.get_rect(
+            center=(WIDTH // 2, 18)))
+        screen.blit(levelValue, levelValue.get_rect(
+            center=(WIDTH // 2, 37)))
+
+        bestLabel = renderTextCached("HIGH SCORE", 11, TEXT_DIM, True)
+        bestValue = renderTextCached(str(highScore), 19, GOLD, True)
+        screen.blit(bestLabel, bestLabel.get_rect(
+            topright=(WIDTH - HUD_MARGIN, 11)))
+        screen.blit(bestValue, bestValue.get_rect(
+            topright=(WIDTH - HUD_MARGIN + 1, 26)))
+
+        # Nyawa berupa hati vektor di kiri bawah, tidak menempel tepi
         for i in range(lives):
-            drawHeart(WIDTH - 18 - i * 20, HEIGHT - 18, 14, RED)
+            drawHeart(HUD_MARGIN + 9 + i * 22, HEIGHT - 16,
+                      HEART_SIZE, HEART_COLOR)
 
-        # Status power-up aktif di kiri atas HUD
+        # Status power-up aktif di bawah top bar (tidak menimpa balok)
         statusParts = []
         if paddleTimer > 0:
-            statusParts.append("Paddle Besar " +
+            statusParts.append("PADDLE " +
                                str((paddleTimer + FPS - 1)//FPS) + "s")
         if slowTimer > 0:
-            statusParts.append("Slow Ball " +
+            statusParts.append("SLOW " +
                                str((slowTimer + FPS - 1)//FPS) + "s")
 
         if statusParts:
-            statusText = font.render(
-                " | ".join(statusParts), True, YELLOW)
-            statusRect = statusText.get_rect(topleft=(8, 6))
-            # Latar hitam agar teks tetap terbaca di atas balok
-            pygame.draw.rect(screen, BLACK, statusRect.inflate(8, 4))
-            screen.blit(statusText, statusRect)
+            statusText = renderTextCached(
+                "  ·  ".join(statusParts), 11, TEXT_DIM, True)
+            screen.blit(statusText, (HUD_MARGIN, 61))
 
-        # High score di kanan atas HUD (plus indikator mute)
-        highLabel = "High : " + str(highScore)
+        # Indikator mute kecil di kanan bawah
         if muted:
-            highLabel += "  (Mute)"
-        highText = font.render(highLabel, True, YELLOW)
-        highRect = highText.get_rect(topright=(WIDTH - 8, 6))
-        pygame.draw.rect(screen, BLACK, highRect.inflate(8, 4))
-        screen.blit(highText, highRect)
+            muteText = renderTextCached("MUTE", 11, TEXT_DIM, True)
+            screen.blit(muteText, muteText.get_rect(
+                midright=(WIDTH - HUD_MARGIN, HEIGHT - 15)))
 
         # Tulisan PAUSED saat permainan dijeda
         if paused:
-            pausedText = titleFont.render("PAUSED", True, WHITE)
+            pausedText = renderTextCached("PAUSED", 34, TEXT_SOFT, True)
             pausedRect = pausedText.get_rect(
                 center=(WIDTH // 2, HEIGHT // 2))
             screen.blit(pausedText, pausedRect)
 
-            pauseHint = font.render(
-                "Tekan P untuk melanjutkan", True, WHITE)
+            pauseHint = renderTextCached(
+                "TEKAN P UNTUK MELANJUTKAN", 12, TEXT_DIM, True)
             pauseHintRect = pauseHint.get_rect(
                 center=(WIDTH // 2, HEIGHT // 2 + 40))
             screen.blit(pauseHint, pauseHintRect)
