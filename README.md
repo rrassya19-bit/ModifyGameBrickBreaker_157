@@ -7,7 +7,6 @@ Block Breaker adalah game arkade berbasis Pygame. Pemain menggerakkan papan untu
 - Nama: Ahmad Rassya Maulana
 - NIM: 20250140157
 
-> Catatan: entry point yang tersedia di repository bernama `app.py`, bukan `main.py`.
 
 ## Demo
 
